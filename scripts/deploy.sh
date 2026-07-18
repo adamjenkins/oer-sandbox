@@ -1,10 +1,10 @@
 #!/bin/bash
 # Deploys the Moodle Playground static bundle (built from the pinned
-# oer-platform/moodle-playground clone) to the Exchange's /try/ path.
+# reference-clones/moodle-playground clone) to the Exchange's /try/ path.
 # See dev-docs/oer-platform/DESIGN.md §4 and SANDBOX-UPGRADES.md.
 set -euo pipefail
 
-PLAYGROUND_SRC="/vagrant/moodle-dev/oer-platform/moodle-playground"
+PLAYGROUND_SRC="/vagrant/moodle-dev/reference-clones/moodle-playground"
 DEPLOY_TARGET="/srv/oer-sandbox/try"
 
 echo "== Assembling static site tree from ${PLAYGROUND_SRC} =="
