@@ -56,6 +56,21 @@ require_cmd() {
 # separately below.
 OER_CONFIG_KEYS="OER_CONFIG_STAMP BUNDLES LANGPACKS TRIAL_DEFAULT_LANG"
 
+# A branch-keyed config key embeds local_oerexchange_pluginallowlist's
+# moodlebranch column verbatim (e.g. BAKE_PLUGINS_5.2,
+# PLUGIN_ZIP_mod_quizquest_5.2 — moodlebranch is stored "5.2"-style, major
+# dot minor; verified against a live allowlist row and against
+# config::render()'s real output, not the design doc's illustrative
+# MOODLE_502_STABLE-style example). A literal "." is not legal in a bash
+# identifier, so printf -v/export/${!name} on the raw key fails outright —
+# found empirically running bake.sh against a real generated config, not
+# assumed. Every caller that turns a config KEY into a shell variable name,
+# on either side (storing here, or looking one up in bake.sh), must run it
+# through this same substitution so the two sides agree on the name.
+oer_varname() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_'
+}
+
 oer_load_config() {
   local file="$1"
   if [ ! -r "$file" ]; then
@@ -90,7 +105,9 @@ oer_load_config() {
 
     # printf -v assigns without evaluating the value: nothing from the file is
     # ever executed. This is the whole reason the file is parsed and not sourced.
-    printf -v "$key" '%s' "$value"
-    export "${key?}"
+    local varname
+    varname="$(oer_varname "$key")"
+    printf -v "$varname" '%s' "$value"
+    export "${varname?}"
   done <"$file"
 }

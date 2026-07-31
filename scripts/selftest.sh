@@ -46,4 +46,17 @@ printf 'LANGPACKS=$(touch %s/pwned)\n' "$TMP" >"$TMP/evil.conf"
 ( source "$SCRIPT_DIR/common.sh"; oer_load_config "$TMP/missing.conf" ) >/dev/null 2>&1
 check "missing file fails" "1" "$?"
 
+# A branch-keyed key embeds the allowlist's moodlebranch value verbatim
+# (e.g. "5.2" — see bake.sh's oer_branch_to_bundle comment), and a literal
+# "." is not legal in a bash identifier. Found empirically running bake.sh
+# against a real generated config, not assumed — guard against a regression.
+printf 'BAKE_PLUGINS_5.2=mod:quizquest\n' >"$TMP/dotted.conf"
+( source "$SCRIPT_DIR/common.sh"
+  oer_load_config "$TMP/dotted.conf"
+  varname="$(oer_varname "BAKE_PLUGINS_5.2")"
+  echo "${!varname}"
+) >"$TMP/out" 2>"$TMP/err"
+check "dotted branch key is parsed" "mod:quizquest" "$(cat "$TMP/out")"
+[ -s "$TMP/err" ] && { echo "FAIL - dotted branch key: stderr was: $(cat "$TMP/err")" >&2; FAILED=1; }
+
 exit $FAILED

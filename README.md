@@ -68,6 +68,33 @@ To rebuild/redeploy later, rerun `install.sh` (an existing clone is
 fetched, not re-cloned) or run `scripts/deploy.sh` alone if the bundles
 are already built.
 
+### Baking language packs and plugins (`scripts/bake.sh`)
+
+`scripts/bake.sh <MOODLE_BRANCH>` injects the language packs and plugins a
+loaded config asks for directly into that branch's Moodle source checkout,
+before that branch's bundle is built, then clears the branch's snapshot
+cache so the next build regenerates and actually picks the injections up
+(the build's own cache fingerprint does not account for a webroot
+injection — see the comment above the `rm -rf .cache/snapshots/$BRANCH`
+line in the script). It is normally invoked by `install.sh --config` (see
+below), not run by hand.
+
+**What it removes.** Without baking, a language pack is downloaded through
+the browser's CORS proxy at every trial boot, and a third-party plugin is
+installed via the WASM runtime's `upgrade_noncore()` path, which does not
+reliably complete its DB registration (see the "Status" section's
+`mod_quizquest` writeup). Baking removes both: the pack ships inside the
+bundle at `oer-baked-lang/<code>/` (no runtime download at all), and a
+baked plugin goes through the same real, non-WASM
+`admin/cli/install_database.php` path that installs every core table, so
+its DB registration is as reliable as core's own.
+
+**Measured bundle-size delta.** Baking one language pack (`ja`) and one
+plugin (`mod_quizquest`) into the `MOODLE_502_STABLE` bundle grew the
+shipped `tar.zst` from 49,355,412 bytes (60,288 files) to 50,642,454 bytes
+(61,716 files) — **+1,287,042 bytes (≈1.23 MiB), +1,428 files** (measured
+2026-07-31, a real `npm run bundle` run, not an estimate).
+
 ### Source pin
 
 `PLAYGROUND_REF` defaults to `2707585fd78849e33f6f663cb81655de88a96513`
