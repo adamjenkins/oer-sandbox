@@ -44,17 +44,41 @@ trap on_exit EXIT
 CLONE_ONLY=0
 BUILD_ONLY=0
 INSTALL_NGINX=0
-for arg in "$@"; do
-  case "$arg" in
-    --clone-only) CLONE_ONLY=1 ;;
-    --build-only) BUILD_ONLY=1 ;;
-    --install-nginx) INSTALL_NGINX=1 ;;
+OER_CONFIG_FILE=""
+# A while/shift loop, not a plain `for arg in "$@"`: --config takes a value
+# argument, which a for-in loop has no way to consume alongside its flag.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --clone-only) CLONE_ONLY=1; shift ;;
+    --build-only) BUILD_ONLY=1; shift ;;
+    --install-nginx) INSTALL_NGINX=1; shift ;;
+    --config)
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --config requires a file argument" >&2
+        exit 1
+      fi
+      OER_CONFIG_FILE="$2"
+      shift 2
+      ;;
     *)
-      echo "Unknown option: $arg" >&2
+      echo "Unknown option: $1" >&2
       exit 1
       ;;
   esac
 done
+
+if [ -n "$OER_CONFIG_FILE" ]; then
+  echo "== Loading sandbox config: $OER_CONFIG_FILE =="
+  # BUNDLES is one of the config file's whitelisted keys
+  # (SANDBOX-CONFIG-DESIGN.md "Two calls made at design time" — it stays in
+  # the config file so "download this file, run the script, get that
+  # sandbox" is literally true). oer_load_config only assigns the keys the
+  # file actually lines contain, so common.sh's own BUNDLES default (or an
+  # env override of it) stands untouched when the file omits it, and is
+  # replaced when the file sets it — no extra logic needed here for that.
+  oer_load_config "$OER_CONFIG_FILE"
+  echo "Config stamp: $OER_CONFIG_STAMP"
+fi
 
 # Installs missing prerequisite software. Idempotent: every package is
 # guarded by a command/extension probe, so a machine that already has
@@ -167,6 +191,20 @@ for spec in $BUNDLES; do
   if [ "$ref" = "$spec" ]; then
     ref=""
   fi
+  if [ -n "$OER_CONFIG_FILE" ]; then
+    echo "== Baking configuration into $branch =="
+    # Forward the SAME GIT_REF pin the build below will use (if any), not
+    # just the branch tip: when bake.sh bakes settings, it computes its
+    # SNAPSHOT_FINGERPRINT from this checkout's current commit, and that
+    # fingerprint must land on exactly what build-moodle-bundle.sh computes
+    # after its OWN fetch a few lines down — otherwise the cache-hit this
+    # whole mechanism depends on silently misses and the baked settings are
+    # lost with no error (the discovery doc's documented hazard). Verified
+    # this actually matters here, not just in theory: MOODLE_502_STABLE's
+    # default pin v5.2.0 resolves to a different commit than the branch tip
+    # (dd25b827... vs 6b079e6d0...) on this same checkout.
+    env ${ref:+GIT_REF="$ref"} "$SCRIPT_DIR/bake.sh" "$branch"
+  fi
   echo "== Building bundle: $branch${ref:+ (pinned to $ref)} =="
   (cd "$PLAYGROUND_DIR" && env BRANCH="$branch" PHP_BIN="$PHP_BIN" ${ref:+GIT_REF="$ref"} npm run bundle)
 done
@@ -178,6 +216,20 @@ fi
 
 "$SCRIPT_DIR/deploy.sh"
 DEPLOY_DONE=1
+
+if [ -n "$OER_CONFIG_FILE" ]; then
+  # Written only here, after DEPLOY_DONE=1 — on the same side of the
+  # on_exit trap's success/failure line as the deploy itself, so a run that
+  # fails before or during the deploy never leaves a stamp claiming the
+  # config reached $DEPLOY_TARGET. A separate file from build-version.json:
+  # that one belongs to the playground's own build, and overloading it
+  # would couple this contract to upstream's.
+  STAMP_JSON=$(printf '{"stamp":"%s","built":%s,"bundles":"%s","langpacks":"%s"}' \
+    "$OER_CONFIG_STAMP" "$(date +%s)" "$BUNDLES" "${LANGPACKS:-}")
+  echo "$STAMP_JSON" | $SUDO tee "$DEPLOY_TARGET/assets/oer-bundle-stamp.json" >/dev/null
+  [ -n "$WEB_OWNER" ] && $SUDO chown "$WEB_OWNER" "$DEPLOY_TARGET/assets/oer-bundle-stamp.json"
+  echo "== Wrote $DEPLOY_TARGET/assets/oer-bundle-stamp.json (stamp $OER_CONFIG_STAMP) =="
+fi
 
 if [ "$INSTALL_NGINX" -eq 1 ]; then
   "$SCRIPT_DIR/nginx-try-conf.sh" --install
