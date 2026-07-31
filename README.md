@@ -30,13 +30,23 @@ additionally writes the block to `/etc/nginx/snippets/oer-sandbox-try.conf`
 (you still add the `include` line to your vhost's `server {}` yourself —
 the script never edits a vhost).
 
+The build needs real memory: the php-worker esbuild bundle (several
+PHP-WASM runtimes) has been OOM-killed on a small production server —
+the symptom is esbuild dying with `Error: The service was stopped` right
+after `Built sw.bundle.js`. Have ~4 GiB of memory+swap available;
+`install.sh` warns before building if there is less.
+
 `install.sh` also installs the software the build needs, idempotently:
 each of `git`, `rsync`, `zip`, `node`+`npm`, and a PHP CLI with the
 `sqlite3` extension (install-snapshot generation) is probed first and
 apt-installed only if missing, so a machine that already has everything
 is never touched and a re-run only fills gaps. On a non-apt system the
-script instead lists the missing packages and exits. Node older than 20
-is refused (upstream's CI builds on Node 24). PHP 8.4 works fine despite
+script instead lists the missing packages and exits. **Node must have
+native zstd (Node ≥ 22.15; upstream CI builds on 24)** — the script
+probes the capability itself and refuses with install instructions if
+it's absent, because distro-packaged Node (Debian stable ships 20.x) is
+too old and the bundle packer dies late in the build without it. PHP 8.4
+works fine despite
 the playground Makefile's `check-php` target insisting on 8.3 — that
 check is CI-parity only, not a real constraint, which is why the scripts
 call `npm run bundle` directly instead of going through `make`.
