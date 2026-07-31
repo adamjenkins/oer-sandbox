@@ -16,28 +16,36 @@
 # A plugin present in the Moodle source tree BEFORE that snapshot is
 # generated goes through that same reliable path.
 #
-# This script does NOT modify the moodle-playground reference clone's own
-# tracked files - it only copies plugin source into the clone's *persistent,
+# This script does NOT modify the playground checkout's own tracked files
+# - it only copies plugin source into the checkout's *persistent,
 # already-gitignored* source checkout cache (.cache/moodle/<branch>/), which
 # survives across ordinary rebuilds (fetch-moodle-source.sh does a `git
 # fetch` + `git reset --hard` on that checkout, not a `git clean`, so
 # untracked directories like an injected plugin are preserved). oer-sandbox
 # still "does not vendor the playground source" in the sense that matters:
-# nothing here is committed into the reference clone, and the plugin source
-# itself lives in its own repo, not copied into oer-sandbox.
+# nothing here is committed into the playground checkout, and the plugin
+# source itself lives in its own repo, not copied into oer-sandbox.
 #
 # Usage:
-#   BRANCH=MOODLE_502_STABLE ./build-bundle-with-plugins.sh mod:quizquest:/vagrant/moodle-dev/moodle-mod_quizquest
+#   BRANCH=MOODLE_502_STABLE ./build-bundle-with-plugins.sh mod:quizquest:/path/to/moodle-mod_quizquest
 #
 # Each argument is type:name:source-dir. Add more arguments to bake in
-# multiple plugins for the same branch/build.
+# multiple plugins for the same branch/build. The playground checkout is
+# PLAYGROUND_DIR (see scripts/common.sh) — run install.sh first if it does
+# not exist yet.
 set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
-PLAYGROUND_DIR="/vagrant/moodle-dev/reference-clones/moodle-playground"
 BRANCH="${BRANCH:-MOODLE_502_STABLE}"
 
 if [ "$#" -eq 0 ]; then
   echo "Usage: BRANCH=<branch> $0 <type:name:source-dir> [more...]" >&2
+  exit 1
+fi
+
+if [ ! -d "$PLAYGROUND_DIR/.git" ]; then
+  echo "ERROR: no playground checkout at $PLAYGROUND_DIR — run install.sh first" >&2
   exit 1
 fi
 
@@ -95,6 +103,6 @@ echo "== Clearing the snapshot cache for $BRANCH ==" >&2
 rm -rf "$PLAYGROUND_DIR/.cache/snapshots/$BRANCH"
 
 echo "== Running build-moodle-bundle.sh for $BRANCH (plugins baked in) ==" >&2
-(cd "$PLAYGROUND_DIR" && BRANCH="$BRANCH" PHP_BIN="${PHP_BIN:-/usr/bin/php8.4}" "$PLAYGROUND_DIR/scripts/build-moodle-bundle.sh")
+(cd "$PLAYGROUND_DIR" && BRANCH="$BRANCH" PHP_BIN="$PHP_BIN" "$PLAYGROUND_DIR/scripts/build-moodle-bundle.sh")
 
 echo "== Done. Bundle for $BRANCH now includes: $* ==" >&2

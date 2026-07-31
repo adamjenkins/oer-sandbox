@@ -1,15 +1,29 @@
 #!/bin/bash
-# Deploys the Moodle Playground static bundle (built from the pinned
-# reference-clones/moodle-playground clone) to the Exchange's /try/ path.
+# Deploys the built Moodle Playground static tree to DEPLOY_TARGET, which
+# nginx serves at TRY_LOCATION (see nginx-try-conf.sh). rsync only, never
+# symlink. Paths are environment-overridable — see scripts/common.sh.
 # See dev-docs/oer-platform/DESIGN.md §4 and SANDBOX-UPGRADES.md.
 set -euo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
 
-PLAYGROUND_SRC="/vagrant/moodle-dev/reference-clones/moodle-playground"
-DEPLOY_TARGET="/srv/oer-sandbox/try"
+require_cmd rsync
 
-echo "== Assembling static site tree from ${PLAYGROUND_SRC} =="
-sudo mkdir -p "${DEPLOY_TARGET}"
-sudo rsync -a --delete "${PLAYGROUND_SRC}/" "${DEPLOY_TARGET}/" \
+if [ ! -f "$PLAYGROUND_DIR/index.html" ]; then
+  echo "ERROR: no playground checkout at $PLAYGROUND_DIR — run install.sh first" >&2
+  exit 1
+fi
+# The build artifacts are gitignored upstream, so a fresh clone that was
+# never built would deploy a broken shell without this check.
+if [ ! -f "$PLAYGROUND_DIR/sw.bundle.js" ] || ! ls "$PLAYGROUND_DIR"/assets/manifests/*.json >/dev/null 2>&1; then
+  echo "ERROR: $PLAYGROUND_DIR has no built service worker or bundle manifests" >&2
+  echo "       (sw.bundle.js, assets/manifests/*.json) — run install.sh first" >&2
+  exit 1
+fi
+
+echo "== Assembling static site tree from ${PLAYGROUND_DIR} =="
+$SUDO mkdir -p "${DEPLOY_TARGET}"
+$SUDO rsync -a --delete "${PLAYGROUND_DIR}/" "${DEPLOY_TARGET}/" \
   --exclude ".git/" \
   --exclude ".github/" \
   --exclude ".cache/" \
@@ -18,7 +32,9 @@ sudo rsync -a --delete "${PLAYGROUND_SRC}/" "${DEPLOY_TARGET}/" \
   --exclude "tests/" \
   --exclude ".agents/"
 
-sudo chown -R www-data:www-data "${DEPLOY_TARGET}"
+if [ -n "$WEB_OWNER" ]; then
+  $SUDO chown -R "$WEB_OWNER" "${DEPLOY_TARGET}"
+fi
 
 echo "== Done. Static bundle deployed to ${DEPLOY_TARGET} =="
-echo "   Add/verify the nginx location block for /try/ (see HARNESS.md §2c)."
+echo "   Serve it with the nginx location block from scripts/nginx-try-conf.sh."

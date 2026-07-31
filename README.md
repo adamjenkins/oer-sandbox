@@ -7,37 +7,90 @@ Podman fleet — see `dev-docs/oer-platform/DESIGN.md` §4 and
 `SANDBOX-COMPARISON.md`/`SANDBOX-UPGRADES.md` for the full design and
 rationale.
 
-This repo does **not** vendor the playground source. It pins a commit of
-the reference clone at `/vagrant/moodle-dev/reference-clones/moodle-playground/`
-(see that repo's own git log for the exact commit deployed) and provides:
+This repo does **not** vendor the playground source. `scripts/install.sh`
+clones Moodle Playground itself at a pinned commit and builds it; nothing
+here assumes a clone already exists somewhere on disk. The scripts run on
+any machine — every path and version is an environment variable with a
+sane default (see `scripts/common.sh`).
 
-- `scripts/deploy.sh` — assembles the built static tree (bundles, worker,
-  shell) and rsyncs it to `/srv/oer-sandbox/try/`, which the Exchange's
-  nginx vhost serves at `/try/` (see HARNESS.md §2c).
-
-## Building the bundles
-
-From the `moodle-playground` clone (PHP 8.4 works fine here despite the
-Makefile's `check-php` target insisting on 8.3 — that check is CI-parity
-only, not a real constraint; `php8.4-sqlite3` and `zip` must be installed
-for snapshot generation and packing):
+## Installing on a fresh machine
 
 ```bash
-cd /vagrant/moodle-dev/reference-clones/moodle-playground
-npm install
-npm run build:version
-npm run build-worker
-PHP_BIN=/usr/bin/php8.4 BRANCH=MOODLE_502_STABLE GIT_REF=v5.2.0 npm run bundle
-PHP_BIN=/usr/bin/php8.4 BRANCH=MOODLE_500_STABLE npm run bundle
+git clone <this-repo> oer-sandbox
+oer-sandbox/scripts/install.sh
 ```
 
-Then deploy:
+That clones the playground (`PLAYGROUND_REPO` at `PLAYGROUND_REF`, into
+the gitignored `playground/` inside this repo), builds the service
+worker, shell, and the `MOODLE_502_STABLE` (pinned `v5.2.0`) +
+`MOODLE_500_STABLE` bundles, rsyncs the static tree to
+`/srv/oer-sandbox/try/`, and prints the nginx `location` block for
+`/try/`. `--clone-only` / `--build-only` stop early; `--install-nginx`
+additionally writes the block to `/etc/nginx/snippets/oer-sandbox-try.conf`
+(you still add the `include` line to your vhost's `server {}` yourself —
+the script never edits a vhost).
 
-```bash
-bash /vagrant/moodle-dev/oer-platform/oer-sandbox/scripts/deploy.sh
-```
+`install.sh` also installs the software the build needs, idempotently:
+each of `git`, `rsync`, `zip`, `node`+`npm`, and a PHP CLI with the
+`sqlite3` extension (install-snapshot generation) is probed first and
+apt-installed only if missing, so a machine that already has everything
+is never touched and a re-run only fills gaps. On a non-apt system the
+script instead lists the missing packages and exits. Node older than 20
+is refused (upstream's CI builds on Node 24). PHP 8.4 works fine despite
+the playground Makefile's `check-php` target insisting on 8.3 — that
+check is CI-parity only, not a real constraint, which is why the scripts
+call `npm run bundle` directly instead of going through `make`.
 
-## Status (2026-07-19)
+Overridable settings (full list in `scripts/common.sh`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PLAYGROUND_REPO` | `https://github.com/ateeducacion/moodle-playground.git` | Playground git URL |
+| `PLAYGROUND_REF` | see "Source pin" below | Commit/tag to build from |
+| `PLAYGROUND_DIR` | `<this repo>/playground` | Clone location (reuse an existing clone by pointing this at it) |
+| `BUNDLES` | `MOODLE_502_STABLE:v5.2.0 MOODLE_500_STABLE` | `BRANCH[:GIT_REF]` specs |
+| `DEPLOY_TARGET` | `/srv/oer-sandbox/try` | Where the static tree is rsynced |
+| `TRY_LOCATION` | `/try/` | URL path nginx serves it at |
+| `WEB_OWNER` | `www-data:www-data` | Ownership of the deployed tree (empty = skip chown) |
+| `PHP_BIN` | `php` from `PATH` | PHP CLI for snapshot generation |
+
+To rebuild/redeploy later, rerun `install.sh` (an existing clone is
+fetched, not re-cloned) or run `scripts/deploy.sh` alone if the bundles
+are already built.
+
+### Source pin
+
+`PLAYGROUND_REF` defaults to `2707585fd78849e33f6f663cb81655de88a96513`
+(upstream `main` as of 2026-07-27). The live-verified deployment (see
+Status below) was built at `8d9c59b`; the `8d9c59b..2707585` diff was
+assessed 2026-07-27 as dependency housekeeping only (php-wasm
+3.1.44→3.1.45, biome, concurrently, GH Actions). Bump the pin
+deliberately, after checking the upstream diff — not by pointing it at
+`main`.
+
+## nginx
+
+`scripts/nginx-try-conf.sh` prints the `location ^~ /try/ { ... }` block
+(paths substituted from the environment); `--install` writes it to
+`/etc/nginx/snippets/oer-sandbox-try.conf`. Either way it must be
+included **inside** the `server {}` block that serves the site, before
+any PHP handling — the `^~` modifier is what stops a same-vhost Moodle's
+PHP regex locations from capturing `/try/*` requests.
+
+## Status (2026-07-19; scripts reworked 2026-07-31)
+
+**2026-07-31**: the scripts were made machine-portable (self-cloning
+install, parameterized paths, generated nginx config, idempotent
+prerequisite installation). Verified that day: `install.sh --clone-only`
+against upstream GitHub (fresh clone and re-run/fetch, pinned commit
+resolves), the nginx output with default and overridden paths, and
+`deploy.sh`'s rsync/excludes and its refuses-unbuilt-clone guard, all
+against scratch directories. **Not yet verified**: a full fresh
+`npm install` + bundle build driven by the new wrapper (the build
+commands themselves are unchanged from the sequence last exercised
+end-to-end on 2026-07-19), and the prerequisite auto-install path on a
+machine that is actually missing packages — the probe/skip half of its
+logic is what was exercised. The section below predates the rework.
 
 Deployed and verified end-to-end, including the actual in-browser WASM boot:
 
