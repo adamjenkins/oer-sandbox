@@ -152,6 +152,33 @@ shipped `tar.zst` from 49,355,412 bytes (60,288 files) to 50,642,454 bytes
 (61,716 files) — **+1,287,042 bytes (≈1.23 MiB), +1,428 files** (measured
 2026-07-31, a real `npm run bundle` run, not an estimate).
 
+### Patches applied to the clone (`scripts/patch-playground.mjs`)
+
+This repo does not vendor the playground source, so an upstream default
+that has to change cannot simply be edited in a tracked file — it has to
+be re-applied to every clone. `install.sh` runs
+`scripts/patch-playground.mjs` immediately after the checkout, before
+anything is built from the clone (`bake.sh` hashes some of these files
+into the snapshot-cache fingerprint and `build-worker` compiles others
+into the worker bundle, so patching later would be invisible or
+half-applied). Each edit is an exact multi-line string match that must
+occur **exactly once**; anything else — anchor gone, anchor ambiguous,
+file missing — aborts the build with the anchor text and what to fix,
+rather than shipping a sandbox silently missing the change. Re-running is
+a no-op (each replacement carries an `OER-SANDBOX PATCH` marker), and
+`install.sh` restores only the patched paths before its checkout, never a
+blanket `git reset --hard` — `PLAYGROUND_DIR` may point at a clone you
+also work in. `scripts/selftest.sh` covers both the success and the
+failure paths.
+
+Keep this list as short as possible and prefer configuration over
+patching: every entry is a maintenance cost paid on each `PLAYGROUND_REF`
+bump.
+
+| File | Change | Why |
+|---|---|---|
+| `src/runtime/config-template.js` | Stop `config.php` assigning `$CFG->langmenu` | Anything assigned in `config.php` becomes a **forced** setting — `lib/setup.php` captures the whole `$CFG` into `$CFG->config_php_settings` and `get_config()` prefers it over the database row. Upstream's `$CFG->langmenu = 0` therefore silently overrode the `langmenu` row that `SITE_SETTING_langmenu=1` bakes into `install.sq3`: the setting was applied, stored correctly, and then ignored, so a trial with a baked language pack had no way to offer the switcher. Leaving it unset makes `langmenu` an ordinary site setting, decided by the sandbox configuration (and still changeable by an admin inside the trial). A configuration that does not set it keeps upstream's behaviour. |
+
 ### Source pin
 
 `PLAYGROUND_REF` defaults to `2707585fd78849e33f6f663cb81655de88a96513`

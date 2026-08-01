@@ -59,4 +59,51 @@ printf 'BAKE_PLUGINS_5.2=mod:quizquest\n' >"$TMP/dotted.conf"
 check "dotted branch key is parsed" "mod:quizquest" "$(cat "$TMP/out")"
 [ -s "$TMP/err" ] && { echo "FAIL - dotted branch key: stderr was: $(cat "$TMP/err")" >&2; FAILED=1; }
 
+# --- patch-playground.mjs ----------------------------------------------------
+# This is a build gate: if it ever stops matching upstream it must FAIL the
+# build, not quietly skip the patch. Exercise the failure path with a known-bad
+# input as well as the success path, so "the patcher printed nothing" can never
+# be mistaken for "the patch applied".
+FAKE="$TMP/fake-playground"
+mkdir -p "$FAKE/src/runtime"
+write_fake_anchor() {
+  local copies="${1:-1}" i
+  : >"$FAKE/src/runtime/config-template.js"
+  for ((i = 0; i < copies; i++)); do
+    printf "if (!property_exists(\$CFG, 'langmenu')) {\n    \$CFG->langmenu = 0;\n}\n" \
+      >>"$FAKE/src/runtime/config-template.js"
+  done
+}
+
+check "--list names the patched file" "src/runtime/config-template.js" \
+  "$(node "$SCRIPT_DIR/patch-playground.mjs" --list)"
+
+write_fake_anchor 1
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "patch applies" "0" "$?"
+grep -q 'OER-SANDBOX PATCH: langmenu' "$FAKE/src/runtime/config-template.js" \
+  && echo "ok   - patched file carries the marker" \
+  || { echo "FAIL - marker missing after patch" >&2; FAILED=1; }
+grep -q '\$CFG->langmenu = 0;' "$FAKE/src/runtime/config-template.js" \
+  && { echo "FAIL - the forcing assignment survived the patch" >&2; FAILED=1; } \
+  || echo "ok   - the forcing assignment is gone"
+
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "patch is idempotent" "0" "$?"
+
+printf 'upstream refactored this away\n' >"$FAKE/src/runtime/config-template.js"
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >"$TMP/out" 2>&1
+check "missing anchor fails the build" "1" "$?"
+grep -q "expected exactly 1" "$TMP/out" \
+  && echo "ok   - failure explains what to fix" \
+  || { echo "FAIL - unhelpful failure message" >&2; FAILED=1; }
+
+write_fake_anchor 2
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "ambiguous anchor fails the build" "1" "$?"
+
+rm -f "$FAKE/src/runtime/config-template.js"
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "missing file fails the build" "1" "$?"
+
 exit $FAILED

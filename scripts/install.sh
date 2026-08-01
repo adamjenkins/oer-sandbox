@@ -156,8 +156,24 @@ else
   echo "Existing clone at $PLAYGROUND_DIR — fetching instead of cloning"
   git -C "$PLAYGROUND_DIR" fetch origin
 fi
+# patch-playground.mjs edits tracked files in the clone, so a re-run (or a
+# PLAYGROUND_REF bump) would otherwise hit "your local changes would be
+# overwritten by checkout". Restore exactly those paths and nothing else — a
+# blanket `git reset --hard` would be wrong here, because PLAYGROUND_DIR is
+# documented as pointable at a clone the operator also works in.
+if [ -d "$PLAYGROUND_DIR/.git" ]; then
+  node "$SCRIPT_DIR/patch-playground.mjs" --list \
+    | (cd "$PLAYGROUND_DIR" && xargs -r git checkout --quiet -- 2>/dev/null) || true
+fi
 git -C "$PLAYGROUND_DIR" -c advice.detachedHead=false checkout --detach "$PLAYGROUND_REF"
 echo "Checked out: $(git -C "$PLAYGROUND_DIR" log --oneline --no-decorate -1)"
+
+# Before any build step reads the clone: bake.sh hashes some of these files
+# into the snapshot-cache fingerprint, and npm run build-worker compiles others
+# into the worker bundle, so patching afterwards would be invisible or, worse,
+# half-applied.
+echo "== Applying oer-sandbox patches to the playground clone =="
+node "$SCRIPT_DIR/patch-playground.mjs" "$PLAYGROUND_DIR"
 
 if [ "$CLONE_ONLY" -eq 1 ]; then
   echo "== Clone complete. Nothing was built or deployed (--clone-only). =="
