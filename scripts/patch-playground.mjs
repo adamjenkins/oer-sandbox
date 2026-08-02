@@ -28,7 +28,52 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+// How big a course backup may be and still take the playground's FAST
+// download path. Upstream caps this at 50 MiB; see the edit below for what
+// the cap actually does and why this deployment raises it. Override per build
+// with OER_FAST_DOWNLOAD_MAX_MB=<megabytes>.
+const FAST_DOWNLOAD_MAX_MB = Number(process.env.OER_FAST_DOWNLOAD_MAX_MB || 384);
+
+if (!Number.isInteger(FAST_DOWNLOAD_MAX_MB) || FAST_DOWNLOAD_MAX_MB < 1) {
+  process.stderr.write(
+    `ERROR: OER_FAST_DOWNLOAD_MAX_MB must be a positive whole number of ` +
+      `megabytes, got "${process.env.OER_FAST_DOWNLOAD_MAX_MB}"\n`,
+  );
+  process.exit(1);
+}
+
 const EDITS = [
+  {
+    file: "src/blueprint/steps/moodle-restore.js",
+    what: `raise the fast-download budget to ${FAST_DOWNLOAD_MAX_MB} MiB`,
+    // The value is part of the marker deliberately: re-running with a
+    // DIFFERENT budget against an already-patched clone must not silently
+    // keep the old one. It won't find its anchor either, and the mismatch
+    // handler below explains what to do.
+    marker: `OER-SANDBOX PATCH: fast-download budget ${FAST_DOWNLOAD_MAX_MB} MiB`,
+    staleprefix: "OER-SANDBOX PATCH: fast-download budget",
+    find: "const MAX_BROWSER_BACKUP_BYTES = 50 * 1024 * 1024;",
+    replace: `// OER-SANDBOX PATCH: fast-download budget ${FAST_DOWNLOAD_MAX_MB} MiB
+// (upstream: 50). This budget does NOT decide whether a backup can be
+// restored — over it, handleRestoreCourse() falls back to downloading inside
+// PHP over the tcpOverFetch bridge, which works but is ~35x slower AND
+// reports no progress at all. Measured on the OER Exchange 2026-08-02: a
+// 359 MB course booted fine on the fallback path, in 4 min 15 s, of which
+// 3 min 54 s was that silent download. Raising the budget puts real course
+// backups back on the native fetch, which streams at full speed and publishes
+// a percentage as it goes.
+//
+// The cost, and why this is a per-deployment number rather than a bigger
+// constant upstream: the fast path buffers the whole file in a JS chunk array
+// and then copies it into one Uint8Array before writing it into MEMFS, so
+// peak memory is roughly 3x the file size. At ${FAST_DOWNLOAD_MAX_MB} MiB that is comfortable
+// on a desktop and unreasonable on a phone. Lower it for a deployment whose
+// visitors are mostly on small devices:
+//   OER_FAST_DOWNLOAD_MAX_MB=128 scripts/install.sh --config ...
+// The real fix is to stream chunks straight into MEMFS (no 2x buffer, progress
+// at any size); this patch is the cheap half of it.
+const MAX_BROWSER_BACKUP_BYTES = ${FAST_DOWNLOAD_MAX_MB} * 1024 * 1024;`,
+  },
   {
     file: "src/runtime/config-template.js",
     what: "stop config.php forcing langmenu off",
@@ -96,6 +141,22 @@ for (const edit of EDITS) {
     already++;
     process.stderr.write(`Already patched: ${edit.file} (${edit.what})\n`);
     continue;
+  }
+
+  // Patched already, but with a different value than this run asks for. The
+  // anchor is gone, so the generic "anchor found 0 times" failure below would
+  // send the reader off to check upstream for a change that has not happened.
+  if (edit.staleprefix && before.includes(edit.staleprefix)) {
+    fail([
+      `ERROR: ${edit.file} already carries an oer-sandbox patch with a`,
+      "       DIFFERENT value than this build asks for.",
+      `       Wanted: ${edit.marker}`,
+      "       This is a re-run against an already-patched clone, not an",
+      "       upstream change. Restore the file and re-run so the new value",
+      "       is applied to pristine source:",
+      `         git -C <playground-dir> checkout -- ${edit.file}`,
+      "       (install.sh does this for you before its checkout.)",
+    ]);
   }
 
   const occurrences = before.split(edit.find).length - 1;

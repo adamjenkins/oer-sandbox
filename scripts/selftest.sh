@@ -65,7 +65,7 @@ check "dotted branch key is parsed" "mod:quizquest" "$(cat "$TMP/out")"
 # input as well as the success path, so "the patcher printed nothing" can never
 # be mistaken for "the patch applied".
 FAKE="$TMP/fake-playground"
-mkdir -p "$FAKE/src/runtime"
+mkdir -p "$FAKE/src/runtime" "$FAKE/src/blueprint/steps"
 write_fake_anchor() {
   local copies="${1:-1}" i
   : >"$FAKE/src/runtime/config-template.js"
@@ -74,13 +74,54 @@ write_fake_anchor() {
       >>"$FAKE/src/runtime/config-template.js"
   done
 }
+write_fake_budget_anchor() {
+  printf 'const MAX_BROWSER_BACKUP_BYTES = 50 * 1024 * 1024;\n' \
+    >"$FAKE/src/blueprint/steps/moodle-restore.js"
+}
 
-check "--list names the patched file" "src/runtime/config-template.js" \
+check "--list names both patched files" \
+  "src/blueprint/steps/moodle-restore.js
+src/runtime/config-template.js" \
   "$(node "$SCRIPT_DIR/patch-playground.mjs" --list)"
 
 write_fake_anchor 1
+write_fake_budget_anchor
 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
 check "patch applies" "0" "$?"
+
+grep -q 'const MAX_BROWSER_BACKUP_BYTES = 384 \* 1024 \* 1024;' \
+  "$FAKE/src/blueprint/steps/moodle-restore.js" \
+  && echo "ok   - fast-download budget raised to the default 384 MiB" \
+  || { echo "FAIL - budget not raised" >&2; FAILED=1; }
+
+# The value is configurable, and a build must be able to choose it — a wrong
+# number here is a memory ceiling on every visitor's browser, so it is worth a
+# test rather than a comment.
+write_fake_budget_anchor
+OER_FAST_DOWNLOAD_MAX_MB=128 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "budget honours OER_FAST_DOWNLOAD_MAX_MB" "0" "$?"
+grep -q 'const MAX_BROWSER_BACKUP_BYTES = 128 \* 1024 \* 1024;' \
+  "$FAKE/src/blueprint/steps/moodle-restore.js" \
+  && echo "ok   - configured budget applied" \
+  || { echo "FAIL - configured budget ignored" >&2; FAILED=1; }
+
+# Re-running with a DIFFERENT budget against an already-patched clone must not
+# silently keep the old number: the anchor is gone, so without this check the
+# generic "anchor missing" failure would send the reader hunting for an
+# upstream change that never happened.
+OER_FAST_DOWNLOAD_MAX_MB=256 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >"$TMP/out" 2>&1
+check "a different budget on a patched clone fails the build" "1" "$?"
+grep -q "DIFFERENT value" "$TMP/out" \
+  && echo "ok   - failure names the real problem" \
+  || { echo "FAIL - unhelpful failure message for a re-patch" >&2; FAILED=1; }
+
+OER_FAST_DOWNLOAD_MAX_MB=not-a-number node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "a non-numeric budget fails the build" "1" "$?"
+
+write_fake_anchor 1
+write_fake_budget_anchor
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "patch re-applies to a restored clone" "0" "$?"
 grep -q 'OER-SANDBOX PATCH: langmenu' "$FAKE/src/runtime/config-template.js" \
   && echo "ok   - patched file carries the marker" \
   || { echo "FAIL - marker missing after patch" >&2; FAILED=1; }
