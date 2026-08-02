@@ -179,6 +179,40 @@ for SPEC in $PLUGIN_SPECS; do
     [ -n "$INNER" ] && PLUGIN_SRC="$INNER"
   fi
 
+  # The package says what it is; the config says where we are about to put it.
+  # If they disagree, Moodle's installer will abort the whole bundle build
+  # several minutes later with "Plugin X is installed in incorrect location",
+  # by which point the cause is far off screen. Catch it here instead, while
+  # the offending spec is still on the operator's screen.
+  #
+  # The usual cause is an allowlist entry whose plugin name was typed by hand
+  # before the Exchange derived it from the package: the old form asked for
+  # the name "without type prefix" and accepted the full frankenstyle name, so
+  # "local:local_accessibility" targets local/local_accessibility and Moodle
+  # rejects it. Re-adding the plugin on a 1.0.5+ Exchange fixes the row at
+  # source, since the name is read from version.php rather than typed.
+  DECLARED_COMPONENT=""
+  if [ -r "$PLUGIN_SRC/version.php" ]; then
+    DECLARED_COMPONENT=$(sed -n "s/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*['\"]\([a-z][a-z0-9_]*\)['\"].*/\1/p" \
+      "$PLUGIN_SRC/version.php" | head -1)
+  fi
+  EXPECTED_COMPONENT="${PLUGIN_TYPE}_${PLUGIN_NAME}"
+  if [ -n "$DECLARED_COMPONENT" ] && [ "$DECLARED_COMPONENT" != "$EXPECTED_COMPONENT" ]; then
+    echo "ERROR: the config asks for '$PLUGIN_TYPE:$PLUGIN_NAME', which would install this" >&2
+    echo "       plugin as '$EXPECTED_COMPONENT', but its version.php declares" >&2
+    echo "       '$DECLARED_COMPONENT'. Moodle refuses a plugin in the wrong directory," >&2
+    echo "       so the bundle build would fail later with 'detectedmisplacedplugin'." >&2
+    case "$DECLARED_COMPONENT" in
+      "${PLUGIN_TYPE}_${PLUGIN_TYPE}_"*|"${PLUGIN_TYPE}_"*)
+        SUGGESTED="${DECLARED_COMPONENT#"${PLUGIN_TYPE}_"}"
+        echo "       Expected spec: '$PLUGIN_TYPE:$SUGGESTED'." >&2
+        ;;
+    esac
+    echo "       Fix the allowlist entry on the Exchange (re-add the plugin so its" >&2
+    echo "       name is read from version.php), download the config again, re-run." >&2
+    exit 1
+  fi
+
   TARGET_DIR="$WEBROOT/$TYPE_DIR/$PLUGIN_NAME"
   echo "== Injecting $PLUGIN_TYPE $PLUGIN_NAME -> $TARGET_DIR ==" >&2
   rm -rf "$TARGET_DIR"
