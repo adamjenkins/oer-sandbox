@@ -37,6 +37,58 @@ location ^~ ${TRY_LOCATION} {
 # serves application/octet-stream for the bundles' .wasm files, add
 # "application/wasm wasm;" to the http-level types (mime.types), NOT to a
 # types {} block in this location (that would replace the whole map).
+
+# ---------------------------------------------------------------------------
+# Response-header buffers for local_oerexchange's "Try it" launch.
+#
+# Keep these if this vhost also serves the Exchange (local_oerexchange) — the
+# usual single-host deployment. If the Exchange runs on a DIFFERENT vhost or
+# host, move this stanza there instead: it is the Exchange's PHP that needs
+# it, not these static files.
+#
+# /local/oerexchange/sandbox_launch.php redirects to ${TRY_LOCATION} with the
+# whole trial blueprint base64-encoded into the Location: header — measured
+# 3.5 KB for a course resource and 6.2 KB for an activity one. nginx's default
+# fastcgi_buffer_size is one memory page (4k on x86-64) and the ENTIRE response
+# header block must fit in that ONE buffer, so PHP-FPM's reply is rejected with
+# "upstream sent too big header" and the visitor gets a 502. At the default
+# size course trials fail intermittently and activity trials fail every time.
+#
+# If this vhost ALREADY has a hand-written buffer override for that script —
+# an exact-match "location = /local/oerexchange/sandbox_launch.php" with its
+# own fastcgi_buffers — remove it when adopting this stanza. The location's
+# values win over these for the one request that matters, so keeping both
+# leaves the smaller ones in force where they are actually needed.
+#
+# fastcgi_busy_buffers_size is deliberately NOT set. It is inherited into any
+# such location, while fastcgi_buffers is overridden there, and nginx requires
+# busy < (all buffers - one buffer): a server-level 64k against a location's
+# "fastcgi_buffers 4 16k" (64k total) fails "nginx -t" outright and nginx will
+# not start (verified 2026-08-02). The default tracks fastcgi_buffers, so
+# leaving it unset is both safe and correct here.
+fastcgi_buffer_size 32k;
+fastcgi_buffers     16 16k;
+
+# ---------------------------------------------------------------------------
+# Deliberately NOT emitted here: large_client_header_buffers.
+#
+# Once the redirect above gets through, the browser sends that same ~6 KB URL
+# straight back as the REQUEST LINE of
+# "GET ${TRY_LOCATION}?moodle=...&blueprint=..." — and a request line that does
+# not fit in ONE large_client_header_buffers buffer is answered with 414
+# (Request-URI Too Large). The default is 4 8k, which a 6 KB URL only just
+# clears, so the 502 can come back as a 414.
+#
+# It cannot live in this snippet reliably: nginx reads the request line before
+# the Host header has selected a virtual server, and the docs are explicit that
+# for a server-level value "the value from the default server can be used"
+# (nginx.org/en/docs/http/ngx_http_core_module.html#large_client_header_buffers,
+# read 2026-08-01). Adding it here anyway is the worst case, because "nginx -t"
+# accepts it in server context without a word (verified 2026-08-01) — so it
+# would look configured while quietly deferring to the default server's value.
+# Set it at http {} level in nginx.conf instead:
+#
+#     large_client_header_buffers 4 16k;
 EOF
 }
 

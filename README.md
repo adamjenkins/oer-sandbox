@@ -199,6 +199,38 @@ included **inside** the `server {}` block that serves the site, before
 any PHP handling — the `^~` modifier is what stops a same-vhost Moodle's
 PHP regex locations from capturing `/try/*` requests.
 
+It also emits the **FastCGI response-header buffers** the Exchange needs.
+`local/oerexchange/sandbox_launch.php` redirects here with the whole trial
+blueprint base64-encoded into the `Location:` header — 3.5 KB for a course
+resource, 6.2 KB for an activity one — and nginx's default
+`fastcgi_buffer_size` of one 4k memory page rejects that with *"upstream sent
+too big header"*, so the visitor gets a **502**. Course trials fail
+intermittently at the default, activity trials every time. Keep that stanza
+when this vhost also serves the Exchange (the usual case); move it to the
+Exchange's own vhost when they are separate.
+
+**If the vhost already carries a hand-written fix for this**, as an exact-match
+`location = /local/oerexchange/sandbox_launch.php` with its own
+`fastcgi_buffers`, remove it when you adopt the generated stanza. A location's
+own values override the server-level ones for exactly the request that needs
+them, so keeping both leaves the older, smaller buffers in force where they
+matter. (This is also why the stanza does not set `fastcgi_busy_buffers_size`:
+that one *is* inherited into such a location while `fastcgi_buffers` is not,
+and the mismatch makes `nginx -t` fail outright rather than degrade.)
+
+One companion directive is deliberately **not** emitted, because a snippet
+included at `server {}` level is the wrong place for it:
+`large_client_header_buffers` (default `4 8k`) governs the *request line*,
+which is where that same ~6 KB URL arrives on the very next hop — too long a
+request line is a **414**. nginx reads the request line before `Host` has
+selected a virtual server, so a server-level value may silently defer to the
+default server's, and `nginx -t` accepts it there without complaint. Set it in
+`nginx.conf` at `http {}` level instead: `large_client_header_buffers 4 16k;`.
+The generated block says all of this inline too.
+
+Background, measurements and the durable code-side fix:
+`dev-docs/oer-platform/NGINX-SANDBOX-LAUNCH.txt`.
+
 ## Status (2026-07-19; scripts reworked 2026-07-31; `--config` added 2026-07-31)
 
 **2026-07-31, `--config`**: a full fresh `install.sh --config <file>
