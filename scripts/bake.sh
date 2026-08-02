@@ -39,6 +39,15 @@ require_cmd curl
 require_cmd unzip
 require_cmd rsync
 
+# Never let relaxed TLS verification be silent: the operator should see it in
+# the build log of every bundle it produced.
+if [ "${OER_INSECURE_TLS:-0}" = "1" ]; then
+  echo "WARNING: OER_INSECURE_TLS=1 — plugin downloads will NOT verify the" >&2
+  echo "         Exchange's TLS certificate. Intended for a development or" >&2
+  echo "         internal Exchange with a self-signed certificate. Each" >&2
+  echo "         download is still checksum-verified against the config." >&2
+fi
+
 # The allowlist's moodlebranch column stores "5.2"-style strings (major.minor
 # only), NOT the "MOODLE_502_STABLE" bundle-branch string this script is
 # invoked with — confirmed against the real code, not the plan's example:
@@ -142,7 +151,10 @@ for SPEC in $PLUGIN_SPECS; do
 
   echo "== Downloading plugin $PLUGIN_TYPE:$PLUGIN_NAME from $PLUGIN_URL ==" >&2
   PLUGIN_ZIP="$TMPDL/plugin-$PLUGIN_TYPE-$PLUGIN_NAME.zip"
-  curl -fL "$PLUGIN_URL" -o "$PLUGIN_ZIP"
+  # Unquoted on purpose: the helper prints either "-k" or nothing, and a
+  # quoted empty string would reach curl as an empty argument.
+  # shellcheck disable=SC2046
+  curl -fL $(oer_curl_tls_flag) "$PLUGIN_URL" -o "$PLUGIN_ZIP"
 
   ACTUAL_SHA=$(sha256sum "$PLUGIN_ZIP" | cut -d' ' -f1)
   if [ "$ACTUAL_SHA" != "$PLUGIN_SHA" ]; then

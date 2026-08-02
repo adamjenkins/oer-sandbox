@@ -199,3 +199,24 @@ oer_plugin_type_dir() {
       ;;
   esac
 }
+
+# Emits the curl flag needed to fetch from an Exchange whose TLS certificate
+# does not verify — printed on stdout, empty by default.
+#
+# Opt-in only, via OER_INSECURE_TLS=1, and deliberately NOT the default. This
+# mirrors local_oerexchange's own `sandboxbaseurlinsecure` setting, which
+# exists for the same situation from the other direction: a development or
+# internal Exchange on a private address and/or a self-signed certificate. A
+# normal public Exchange must keep verification on, because these downloads are
+# plugin code that gets baked into every trial the sandbox serves — the one
+# place a substituted file matters most.
+#
+# Relaxing verification is survivable here only because the download is
+# checksum-verified immediately afterwards against the sha256 the config
+# carries, so a substituted file still fails the bake. Without that check this
+# flag would be indefensible.
+oer_curl_tls_flag() {
+  if [ "${OER_INSECURE_TLS:-0}" = "1" ]; then
+    printf '%s' '-k'
+  fi
+}
