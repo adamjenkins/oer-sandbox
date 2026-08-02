@@ -79,6 +79,11 @@ for SPEC in "$@"; do
   # list stopped being safe once dependencies became automatic.
   TYPE_DIR="$(oer_plugin_type_dir "$PLUGIN_TYPE")" || exit 1
 
+  # Same reasoning as bake.sh: the source tree is a cache, and the rm -rf below
+  # only clears the directory about to be written, so a plugin injected under
+  # the wrong name by an earlier run would survive and fail every later build.
+  oer_sweep_misplaced_plugins "$WEBROOT/$TYPE_DIR" "$PLUGIN_TYPE"
+
   TARGET_DIR="$WEBROOT/$TYPE_DIR/$PLUGIN_NAME"
   echo "== Injecting $PLUGIN_TYPE $PLUGIN_NAME: $PLUGIN_SRC -> $TARGET_DIR ==" >&2
   rm -rf "$TARGET_DIR"

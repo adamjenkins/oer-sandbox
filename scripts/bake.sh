@@ -191,11 +191,7 @@ for SPEC in $PLUGIN_SPECS; do
   # "local:local_accessibility" targets local/local_accessibility and Moodle
   # rejects it. Re-adding the plugin on a 1.0.5+ Exchange fixes the row at
   # source, since the name is read from version.php rather than typed.
-  DECLARED_COMPONENT=""
-  if [ -r "$PLUGIN_SRC/version.php" ]; then
-    DECLARED_COMPONENT=$(sed -n "s/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*['\"]\([a-z][a-z0-9_]*\)['\"].*/\1/p" \
-      "$PLUGIN_SRC/version.php" | head -1)
-  fi
+  DECLARED_COMPONENT="$(oer_declared_component "$PLUGIN_SRC/version.php")"
   EXPECTED_COMPONENT="${PLUGIN_TYPE}_${PLUGIN_NAME}"
   if [ -n "$DECLARED_COMPONENT" ] && [ "$DECLARED_COMPONENT" != "$EXPECTED_COMPONENT" ]; then
     echo "ERROR: the config asks for '$PLUGIN_TYPE:$PLUGIN_NAME', which would install this" >&2
@@ -212,6 +208,13 @@ for SPEC in $PLUGIN_SPECS; do
     echo "       name is read from version.php), download the config again, re-run." >&2
     exit 1
   fi
+
+  # Clear out anything an earlier run left in the wrong place before writing.
+  # The Moodle source tree is a cache that survives between builds and the
+  # injection below only removes the directory it is about to create, so a
+  # plugin injected under a wrong name once stays there forever and fails
+  # every later build — including builds whose config has since been fixed.
+  oer_sweep_misplaced_plugins "$WEBROOT/$TYPE_DIR" "$PLUGIN_TYPE"
 
   TARGET_DIR="$WEBROOT/$TYPE_DIR/$PLUGIN_NAME"
   echo "== Injecting $PLUGIN_TYPE $PLUGIN_NAME -> $TARGET_DIR ==" >&2

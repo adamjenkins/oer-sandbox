@@ -220,3 +220,51 @@ oer_curl_tls_flag() {
     printf '%s' '-k'
   fi
 }
+
+# Prints the component a plugin's version.php declares, or nothing.
+#
+# Tokenising properly is not available here, but the declaration is a plain
+# literal in every real plugin, and a miss is safe: callers treat "no declared
+# component" as "cannot check", never as a mismatch.
+oer_declared_component() {
+  local versionphp="$1"
+  [ -r "$versionphp" ] || return 0
+  sed -n "s/^[[:space:]]*\$plugin->component[[:space:]]*=[[:space:]]*['\"]\([a-z][a-z0-9_]*\)['\"].*/\1/p" \
+    "$versionphp" | head -1
+}
+
+# Removes any plugin directory under $1 whose version.php declares a component
+# that does not match where it sits.
+#
+# Moodle refuses to install such a plugin ("detectedmisplacedplugin") and
+# aborts the whole bundle build, so anything this deletes was already fatal.
+#
+# It exists because the Moodle source tree is a persistent CACHE, and bake.sh
+# only ever `rm -rf`s the directory it is about to write. A run that injected
+# a plugin under the wrong name — from a config whose plugin name was typed by
+# hand, say "local:local_accessibility" — leaves that directory behind
+# forever, and every later build fails on it identically even after the config
+# is corrected. Without this sweep the script is not idempotent in the one
+# situation where idempotency actually matters: recovering from a bad run.
+#
+# Scoped to the plugin-type directories bake.sh writes into, and it only ever
+# deletes a directory that is definitely broken.
+oer_sweep_misplaced_plugins() {
+  local typedir="$1" plugintype="$2"
+  [ -d "$typedir" ] || return 0
+
+  local dir name declared expected
+  for dir in "$typedir"/*/; do
+    [ -d "$dir" ] || continue
+    name="$(basename "$dir")"
+    declared="$(oer_declared_component "${dir}version.php")"
+    [ -n "$declared" ] || continue
+
+    expected="${plugintype}_${name}"
+    if [ "$declared" != "$expected" ]; then
+      echo "== Removing misplaced plugin ${typedir}/${name}: it declares '${declared}'," >&2
+      echo "   which Moodle expects at '${declared#"${plugintype}_"}'. Left by an earlier run." >&2
+      rm -rf "$dir"
+    fi
+  done
+}
