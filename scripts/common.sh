@@ -111,3 +111,91 @@ oer_load_config() {
     export "${varname?}"
   done <"$file"
 }
+
+# Maps a Moodle plugin type to its directory under the webroot, printing the
+# directory on stdout and returning non-zero for an unknown type.
+#
+# This used to be a three-entry case statement (mod/block/local) duplicated in
+# bake.sh and build-bundle-with-plugins.sh, on the reasoning that those were
+# the only types the platform was "likely to ever need". That stopped being
+# safe once the Exchange began adding a plugin's DEPENDENCIES to the allowlist
+# automatically: an admin allowlisting one activity can now pull in a qtype, a
+# filter or an admin tool without ever naming it, and an unknown type here
+# aborts the whole bake.
+#
+# The list is Moodle's own, generated from core_component::get_plugin_types()
+# on Moodle 5.2.1 (2026-08-02) rather than written from memory. Subplugin
+# types are included: they are real plugin types a dependency can legitimately
+# have.
+oer_plugin_type_dir() {
+  local type="$1"
+  case "$type" in
+    aiplacement) echo "ai/placement" ;;
+    aiprovider) echo "ai/provider" ;;
+    antivirus) echo "lib/antivirus" ;;
+    assignfeedback) echo "mod/assign/feedback" ;;
+    assignsubmission) echo "mod/assign/submission" ;;
+    auth) echo "auth" ;;
+    availability) echo "availability/condition" ;;
+    bbbext) echo "mod/bigbluebuttonbn/extension" ;;
+    block) echo "blocks" ;;
+    booktool) echo "mod/book/tool" ;;
+    cachelock) echo "cache/locks" ;;
+    cachestore) echo "cache/stores" ;;
+    calendartype) echo "calendar/type" ;;
+    communication) echo "communication/provider" ;;
+    contenttype) echo "contentbank/contenttype" ;;
+    coursereport) echo "course/report" ;;
+    customfield) echo "customfield/field" ;;
+    datafield) echo "mod/data/field" ;;
+    dataformat) echo "dataformat" ;;
+    datapreset) echo "mod/data/preset" ;;
+    editor) echo "lib/editor" ;;
+    enrol) echo "enrol" ;;
+    factor) echo "admin/tool/mfa/factor" ;;
+    fileconverter) echo "files/converter" ;;
+    filter) echo "filter" ;;
+    format) echo "course/format" ;;
+    forumreport) echo "mod/forum/report" ;;
+    gradeexport) echo "grade/export" ;;
+    gradeimport) echo "grade/import" ;;
+    gradepenalty) echo "grade/penalty" ;;
+    gradereport) echo "grade/report" ;;
+    gradingform) echo "grade/grading/form" ;;
+    h5plib) echo "h5p/h5plib" ;;
+    local) echo "local" ;;
+    logstore) echo "admin/tool/log/store" ;;
+    ltiservice) echo "mod/lti/service" ;;
+    ltisource) echo "mod/lti/source" ;;
+    media) echo "media/player" ;;
+    message) echo "message/output" ;;
+    mlbackend) echo "lib/mlbackend" ;;
+    mod) echo "mod" ;;
+    paygw) echo "payment/gateway" ;;
+    plagiarism) echo "plagiarism" ;;
+    portfolio) echo "portfolio" ;;
+    profilefield) echo "user/profile/field" ;;
+    qbank) echo "question/bank" ;;
+    qbehaviour) echo "question/behaviour" ;;
+    qformat) echo "question/format" ;;
+    qtype) echo "question/type" ;;
+    quiz) echo "mod/quiz/report" ;;
+    quizaccess) echo "mod/quiz/accessrule" ;;
+    report) echo "report" ;;
+    repository) echo "repository" ;;
+    scormreport) echo "mod/scorm/report" ;;
+    search) echo "search/engine" ;;
+    smsgateway) echo "sms/gateway" ;;
+    theme) echo "theme" ;;
+    tiny) echo "lib/editor/tiny/plugins" ;;
+    tool) echo "admin/tool" ;;
+    webservice) echo "webservice" ;;
+    workshopallocation) echo "mod/workshop/allocation" ;;
+    workshopeval) echo "mod/workshop/eval" ;;
+    workshopform) echo "mod/workshop/form" ;;
+    *)
+      echo "ERROR: unknown Moodle plugin type '$type' — regenerate oer_plugin_type_dir() in scripts/common.sh from core_component::get_plugin_types()" >&2
+      return 1
+      ;;
+  esac
+}

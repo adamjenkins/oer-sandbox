@@ -74,18 +74,10 @@ for SPEC in "$@"; do
     exit 1
   fi
 
-  # Moodle's own plugin-type-to-directory map (the ones this platform is
-  # likely to ever need baked in). Extend if a future allowlisted plugin
-  # uses a type not listed here.
-  case "$PLUGIN_TYPE" in
-    mod) TYPE_DIR="mod" ;;
-    block) TYPE_DIR="blocks" ;;
-    local) TYPE_DIR="local" ;;
-    *)
-      echo "ERROR: unknown plugin type '$PLUGIN_TYPE' - add its directory to the case statement in this script" >&2
-      exit 1
-      ;;
-  esac
+  # Moodle's full plugin-type-to-directory map, shared with bake.sh
+  # (scripts/common.sh) — see the note there on why the short mod/block/local
+  # list stopped being safe once dependencies became automatic.
+  TYPE_DIR="$(oer_plugin_type_dir "$PLUGIN_TYPE")" || exit 1
 
   TARGET_DIR="$WEBROOT/$TYPE_DIR/$PLUGIN_NAME"
   echo "== Injecting $PLUGIN_TYPE $PLUGIN_NAME: $PLUGIN_SRC -> $TARGET_DIR ==" >&2

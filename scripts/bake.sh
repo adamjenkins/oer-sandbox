@@ -133,17 +133,12 @@ for SPEC in $PLUGIN_SPECS; do
     exit 1
   fi
 
-  # Moodle's own plugin-type-to-directory map (the ones this platform is
-  # likely to ever need baked in) — same map as build-bundle-with-plugins.sh.
-  case "$PLUGIN_TYPE" in
-    mod) TYPE_DIR="mod" ;;
-    block) TYPE_DIR="blocks" ;;
-    local) TYPE_DIR="local" ;;
-    *)
-      echo "ERROR: unknown plugin type '$PLUGIN_TYPE' - add its directory to the case statement in this script" >&2
-      exit 1
-      ;;
-  esac
+  # Moodle's full plugin-type-to-directory map, shared with
+  # build-bundle-with-plugins.sh (scripts/common.sh). It has to be the full
+  # map, not the three types this platform started with: the Exchange now
+  # allowlists a plugin's dependencies automatically, so a bake can be handed
+  # a qtype, filter or tool that nobody typed in by hand.
+  TYPE_DIR="$(oer_plugin_type_dir "$PLUGIN_TYPE")" || exit 1
 
   echo "== Downloading plugin $PLUGIN_TYPE:$PLUGIN_NAME from $PLUGIN_URL ==" >&2
   PLUGIN_ZIP="$TMPDL/plugin-$PLUGIN_TYPE-$PLUGIN_NAME.zip"
