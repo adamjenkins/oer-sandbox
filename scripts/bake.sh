@@ -87,7 +87,7 @@ trap cleanup_tmpdl EXIT
 # before baking the ones it does — the source tree is a cache, and nothing else
 # ever removes them (common.sh's sweep comment has the full reasoning).
 # shellcheck disable=SC2086
-oer_sweep_unconfigured_langpacks "$WEBROOT" ${LANGPACKS:-}
+SWEPT_LANGPACKS="$(oer_sweep_unconfigured_langpacks "$WEBROOT" ${LANGPACKS:-})"
 
 # download.moodle.org's langpack directories are keyed by Moodle series
 # (e.g. "5.2"), the same form as BUNDLE_BRANCH above.
@@ -148,7 +148,7 @@ for SPEC in $PLUGIN_SPECS; do
   KEEP_PATHS="$KEEP_PATHS $KEEP_DIR/$KEEP_NAME"
 done
 # shellcheck disable=SC2086
-oer_sweep_unconfigured_plugins "$MOODLE_DIR" "$WEBROOT" $KEEP_PATHS
+SWEPT_PLUGINS="$(oer_sweep_unconfigured_plugins "$MOODLE_DIR" "$WEBROOT" $KEEP_PATHS)"
 
 for SPEC in $PLUGIN_SPECS; do
   PLUGIN_TYPE="${SPEC%%:*}"
@@ -343,11 +343,23 @@ elif [ -n "$PLUGIN_SPECS" ]; then
   # fresh, correctly-fingerprinted (and plugin-inclusive, since injection
   # above already happened) snapshot at the cache path directly.
   rm -rf "$PLAYGROUND_DIR/.cache/snapshots/$BRANCH"
+elif [ "${SWEPT_PLUGINS:-0}" -gt 0 ]; then
+  echo "== Clearing the snapshot cache for $BRANCH ($SWEPT_PLUGINS plugin(s) swept, nothing to bake) ==" >&2
+  # Nothing is being baked, so neither branch above runs — but the sweep just
+  # removed a plugin from the source tree, and a snapshot cached before that
+  # still has it REGISTERED IN ITS DATABASE (mdl_modules, mdl_config_plugins).
+  # The build's fingerprint covers the Moodle commit and the playground's
+  # scripts/patches, none of which changed, so without this the stale snapshot
+  # is a cache hit and the de-configured plugin survives in the bundle's DB
+  # even though its files are gone — the worst of both, a half-installed
+  # plugin. Force a real rebuild instead.
+  rm -rf "$PLAYGROUND_DIR/.cache/snapshots/$BRANCH"
 else
   echo "== Nothing to bake into the install snapshot for $BRANCH; snapshot cache left untouched ==" >&2
   # Language packs alone don't touch install.sq3 (they live under the
   # webroot, not the DB), so there is nothing here that a cached snapshot
-  # could be stale with respect to.
+  # could be stale with respect to — including one the langpack sweep just
+  # took a pack away from ($SWEPT_LANGPACKS), which changes the webroot only.
 fi
 
 echo "== Baked into $BRANCH: langpacks=[${LANGPACKS:-}] plugins=[${PLUGIN_SPECS:-}] settings=[$([ -n "$SETTINGS_LINES" ] && echo yes || echo no)] ==" >&2

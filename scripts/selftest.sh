@@ -242,4 +242,23 @@ printf '<?php\n' >"$SRC/oer-baked-lang/fr/langconfig.php"
   && echo "ok   - de-configured langpack is swept" \
   || { echo "FAIL - fr survived the sweep" >&2; FAILED=1; }
 
+# Both sweeps report how many directories they removed, on stdout (their
+# narration goes to stderr). bake.sh needs the plugin count: a swept plugin is
+# registered in the branch's install snapshot, so a snapshot cached before the
+# sweep still contains it and must not be reused. Nothing else in the script
+# would notice — the branch that leaves the snapshot cache untouched is reached
+# precisely when there is neither a plugin nor a setting to bake.
+write_version_php "$SRC/mod/oldplugin" "mod_oldplugin"
+COUNT=$( source "$SCRIPT_DIR/common.sh"
+         oer_sweep_unconfigured_plugins "$SRC" "$SRC" "local/accessibility" 2>/dev/null )
+check "sweep reports how many plugins it removed" "1" "$COUNT"
+
+COUNT=$( source "$SCRIPT_DIR/common.sh"
+         oer_sweep_unconfigured_plugins "$SRC" "$SRC" "local/accessibility" 2>/dev/null )
+check "sweep reports zero when it removes nothing" "0" "$COUNT"
+
+mkdir -p "$SRC/oer-baked-lang/de"
+COUNT=$( source "$SCRIPT_DIR/common.sh"; oer_sweep_unconfigured_langpacks "$SRC" "ja" 2>/dev/null )
+check "langpack sweep reports how many it removed" "1" "$COUNT"
+
 exit $FAILED

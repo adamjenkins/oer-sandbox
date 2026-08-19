@@ -289,14 +289,20 @@ oer_sweep_misplaced_plugins() {
 # left strictly alone rather than swept on a guess. Only directories are
 # considered, so the untracked files patch-moodle-source.sh writes into lib/
 # are never candidates.
+#
+# Prints the number of directories removed on stdout — bake.sh needs it to
+# decide whether the branch's cached install snapshot still describes reality.
+# All narration goes to stderr so that count is the only thing on stdout.
 oer_sweep_unconfigured_plugins() {
   local moodledir="$1" webroot="$2"
   shift 2
   local keep=" $* "
+  local removed=0
 
   if [ ! -d "$moodledir/.git" ]; then
     echo "== Sweep skipped: $moodledir is not a git checkout, so an injected plugin" >&2
     echo "   cannot be told apart from a core one. Nothing removed. ==" >&2
+    echo "$removed"
     return 0
   fi
 
@@ -327,7 +333,10 @@ oer_sweep_unconfigured_plugins() {
     echo "== Removing $rel ($declared): injected by an earlier run, not in this" >&2
     echo "   configuration. The config is the truth; the source tree is a cache. ==" >&2
     rm -rf "${moodledir:?}/${path:?}"
+    removed=$((removed + 1))
   done < <(git -C "$moodledir" ls-files --others --exclude-standard --directory -z -- "$relroot")
+
+  echo "$removed"
 }
 
 # The language-pack equivalent. $1 is the webroot, the rest are the language
@@ -337,8 +346,12 @@ oer_sweep_unconfigured_langpacks() {
   local webroot="$1"
   shift
   local keep=" $* "
+  local removed=0
 
-  [ -d "$webroot/oer-baked-lang" ] || return 0
+  if [ ! -d "$webroot/oer-baked-lang" ]; then
+    echo "$removed"
+    return 0
+  fi
 
   local dir code
   for dir in "$webroot"/oer-baked-lang/*/; do
@@ -349,5 +362,8 @@ oer_sweep_unconfigured_langpacks() {
     esac
     echo "== Removing baked language pack '$code': not in this configuration ==" >&2
     rm -rf "$dir"
+    removed=$((removed + 1))
   done
+
+  echo "$removed"
 }
