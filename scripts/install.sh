@@ -125,7 +125,15 @@ if [ -z "$PHP_BIN" ] || ! command -v "$PHP_BIN" >/dev/null 2>&1; then
   apt_install php-cli
   PHP_BIN="$(command -v php)"
 fi
-if ! "$PHP_BIN" -m | grep -qix sqlite3; then
+# Ask PHP itself whether the extension is loaded — never `php -m | grep -q`
+# here: PHP CLI implicit-flushes each module line, `grep -q` exits at the
+# match, and under pipefail PHP's EPIPE exit (255) intermittently fails the
+# pipeline even though the module is loaded (lost scheduling race; seen
+# often on busy/cold first runs).
+php_has_sqlite3() {
+  "$PHP_BIN" -r 'exit(extension_loaded("sqlite3") ? 0 : 1);'
+}
+if ! php_has_sqlite3; then
   # The bundles' baseline install snapshot is generated with this CLI and
   # needs sqlite3. Match the extension package to the CLI's own version
   # (php8.4-sqlite3, ...), falling back to the distro default.
@@ -133,10 +141,10 @@ if ! "$PHP_BIN" -m | grep -qix sqlite3; then
   apt_install "php${PHP_MINOR}-sqlite3" || apt_install php-sqlite3
   # "Installed" is not "enabled": the package may already be present but the
   # module disabled for the CLI SAPI. phpenmod is idempotent and covers it.
-  if ! "$PHP_BIN" -m | grep -qix sqlite3 && command -v phpenmod >/dev/null 2>&1; then
+  if ! php_has_sqlite3 && command -v phpenmod >/dev/null 2>&1; then
     $SUDO phpenmod -v "$PHP_MINOR" sqlite3 || $SUDO phpenmod sqlite3 || true
   fi
-  if ! "$PHP_BIN" -m | grep -qix sqlite3; then
+  if ! php_has_sqlite3; then
     echo "ERROR: the PHP CLI the script is using has no sqlite3 extension," >&2
     echo "       even after trying to install and enable it. Evidence:" >&2
     echo "         PHP_BIN: $PHP_BIN ($("$PHP_BIN" -v 2>/dev/null | head -1))" >&2
