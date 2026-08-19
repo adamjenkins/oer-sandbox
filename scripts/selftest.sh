@@ -78,16 +78,31 @@ write_fake_budget_anchor() {
   printf 'const MAX_BROWSER_BACKUP_BYTES = 50 * 1024 * 1024;\n' \
     >"$FAKE/src/blueprint/steps/moodle-restore.js"
 }
+# The DSN is spelled out because the patch anchors on it verbatim — if
+# upstream rotates it, the real build fails loudly and this fixture must too.
+write_fake_sentry_config() {
+  printf '{\n  "name": "fake",\n  "sentry": {\n    "dsn": "https://e6dac7d88c3dae67f635103541a10d66@o4510456164712448.ingest.de.sentry.io/4511915755962448"\n  },\n  "other": true\n}\n' \
+    >"$FAKE/playground.config.json"
+}
 
-check "--list names both patched files" \
+check "--list names all three patched files" \
   "src/blueprint/steps/moodle-restore.js
-src/runtime/config-template.js" \
+src/runtime/config-template.js
+playground.config.json" \
   "$(node "$SCRIPT_DIR/patch-playground.mjs" --list)"
 
 write_fake_anchor 1
 write_fake_budget_anchor
+write_fake_sentry_config
 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
 check "patch applies" "0" "$?"
+
+grep -q 'sentryDisabled' "$FAKE/playground.config.json" \
+  && echo "ok   - patched config carries the sentry-stripped marker" \
+  || { echo "FAIL - sentry-stripped marker missing" >&2; FAILED=1; }
+grep -q 'ingest.de.sentry.io' "$FAKE/playground.config.json" \
+  && { echo "FAIL - the sentry DSN survived the patch" >&2; FAILED=1; } \
+  || echo "ok   - the sentry DSN is gone"
 
 grep -q 'const MAX_BROWSER_BACKUP_BYTES = 384 \* 1024 \* 1024;' \
   "$FAKE/src/blueprint/steps/moodle-restore.js" \
@@ -120,6 +135,7 @@ check "a non-numeric budget fails the build" "1" "$?"
 
 write_fake_anchor 1
 write_fake_budget_anchor
+write_fake_sentry_config
 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
 check "patch re-applies to a restored clone" "0" "$?"
 grep -q 'OER-SANDBOX PATCH: langmenu' "$FAKE/src/runtime/config-template.js" \
