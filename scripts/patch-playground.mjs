@@ -96,6 +96,27 @@ const MAX_BROWSER_BACKUP_BYTES = ${FAST_DOWNLOAD_MAX_MB} * 1024 * 1024;`,
 // upstream's behaviour unchanged.
 `,
   },
+  {
+    file: "playground.config.json",
+    what: "strip upstream's Sentry DSN (no visitor telemetry from this deployment)",
+    // Upstream ships its own Sentry ingest DSN in the config (#286, ADR-0028),
+    // and deploy.sh rsyncs this file verbatim to the deploy target - so without
+    // this edit every OER trial visitor's browser errors (tagged with runtime,
+    // Moodle branch and PHP version) would be reported to the upstream
+    // project's Sentry account. Their client is a no-op when config.sentry.dsn
+    // is unset (src/shell/main.js initMonitoring), so removing the block is a
+    // complete disable. JSON cannot carry comments, so the marker lives in a
+    // harmless extra key the shell never reads. The DSN is part of the anchor
+    // deliberately: if upstream rotates it, the build stops here and a human
+    // re-checks what else changed around monitoring.
+    marker: "OER-SANDBOX PATCH: sentry telemetry stripped",
+    find: `  "sentry": {
+    "dsn": "https://e6dac7d88c3dae67f635103541a10d66@o4510456164712448.ingest.de.sentry.io/4511915755962448"
+  },
+`,
+    replace: `  "sentryDisabled": "OER-SANDBOX PATCH: sentry telemetry stripped - this deployment reports nothing to upstream's Sentry",
+`,
+  },
 ];
 
 function fail(lines) {

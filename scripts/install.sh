@@ -164,6 +164,12 @@ fi
 if [ -d "$PLAYGROUND_DIR/.git" ]; then
   node "$SCRIPT_DIR/patch-playground.mjs" --list \
     | (cd "$PLAYGROUND_DIR" && xargs -r git checkout --quiet -- 2>/dev/null) || true
+  # npm install (run below, by us) rewrites package-lock.json when the local
+  # npm serialises lockfile metadata differently than upstream's (seen for
+  # real: npm dropping the "libc" fields). That churn is this script's own
+  # byproduct, so restore it too — same reasoning as the patched files, and
+  # without it a PLAYGROUND_REF bump aborts at the checkout below.
+  git -C "$PLAYGROUND_DIR" checkout --quiet -- package-lock.json 2>/dev/null || true
 fi
 git -C "$PLAYGROUND_DIR" -c advice.detachedHead=false checkout --detach "$PLAYGROUND_REF"
 echo "Checked out: $(git -C "$PLAYGROUND_DIR" log --oneline --no-decorate -1)"
@@ -216,9 +222,10 @@ for spec in $BUNDLES; do
     # after its OWN fetch a few lines down — otherwise the cache-hit this
     # whole mechanism depends on silently misses and the baked settings are
     # lost with no error (the discovery doc's documented hazard). Verified
-    # this actually matters here, not just in theory: MOODLE_502_STABLE's
-    # default pin v5.2.0 resolves to a different commit than the branch tip
-    # (dd25b827... vs 6b079e6d0...) on this same checkout.
+    # this actually matters here, not just in theory: a pinned
+    # MOODLE_502_STABLE (the pre-2026-08 default pinned v5.2.0) resolves to
+    # a different commit than the branch tip (dd25b827... vs 6b079e6d0...)
+    # on this same checkout.
     env ${ref:+GIT_REF="$ref"} "$SCRIPT_DIR/bake.sh" "$branch"
   fi
   echo "== Building bundle: $branch${ref:+ (pinned to $ref)} =="

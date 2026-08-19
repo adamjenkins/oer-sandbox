@@ -22,7 +22,7 @@ oer-sandbox/scripts/install.sh
 
 That clones the playground (`PLAYGROUND_REPO` at `PLAYGROUND_REF`, into
 the gitignored `playground/` inside this repo), builds the service
-worker, shell, and the `MOODLE_502_STABLE` (pinned `v5.2.0`) +
+worker, shell, and the `MOODLE_502_STABLE` +
 `MOODLE_500_STABLE` bundles, rsyncs the static tree to
 `/srv/oer-sandbox/try/`, and prints the nginx `location` block for
 `/try/`. `--clone-only` / `--build-only` stop early; `--install-nginx`
@@ -115,7 +115,7 @@ Overridable settings (full list in `scripts/common.sh`):
 | `PLAYGROUND_REPO` | `https://github.com/ateeducacion/moodle-playground.git` | Playground git URL |
 | `PLAYGROUND_REF` | see "Source pin" below | Commit/tag to build from |
 | `PLAYGROUND_DIR` | `<this repo>/playground` | Clone location (reuse an existing clone by pointing this at it) |
-| `BUNDLES` | `MOODLE_502_STABLE:v5.2.0 MOODLE_500_STABLE` | `BRANCH[:GIT_REF]` specs |
+| `BUNDLES` | `MOODLE_502_STABLE MOODLE_500_STABLE` | `BRANCH[:GIT_REF]` specs (both track the branch tip by default; pin with `:vX.Y.Z` for a reproducible build — the sandbox configuration's own `BUNDLES=` overrides this) |
 | `DEPLOY_TARGET` | `/srv/oer-sandbox/try` | Where the static tree is rsynced |
 | `TRY_LOCATION` | `/try/` | URL path nginx serves it at |
 | `WEB_OWNER` | `www-data:www-data` | Ownership of the deployed tree (empty = skip chown) |
@@ -179,16 +179,25 @@ bump.
 |---|---|---|
 | `src/blueprint/steps/moodle-restore.js` | Raise `MAX_BROWSER_BACKUP_BYTES` from 50 MiB to `OER_FAST_DOWNLOAD_MAX_MB` (default **384**) | That constant is not a "can this be restored" limit — over it, the restore step falls back to downloading the `.mbz` *inside* PHP over the tcpOverFetch bridge, which works but is roughly 35x slower and reports **no progress at all**. Measured against the OER Exchange on 2026-08-02: a 359 MB course booted on the fallback path in **4 min 15 s**, of which 3 min 54 s was that silent download; with the budget raised, the same course booted in **23.8 s** with a percentage readout throughout. The cost is memory — the fast path buffers the file in a JS chunk array and then copies it into one `Uint8Array` before writing it to MEMFS, so peak use is roughly 3x the file size. 384 MiB is comfortable on a desktop and unreasonable on a phone; lower it for a deployment whose visitors are mostly on small devices (`OER_FAST_DOWNLOAD_MAX_MB=128 scripts/install.sh --config …`). The proper fix is to stream chunks straight into MEMFS — no 2x buffer, progress at any size — which is worth sending upstream; this patch is the cheap half of it. **Keep the Exchange's `sandboxwarnbytes` setting in step with this number**, or it will warn about resources this sandbox now handles quickly. |
 | `src/runtime/config-template.js` | Stop `config.php` assigning `$CFG->langmenu` | Anything assigned in `config.php` becomes a **forced** setting — `lib/setup.php` captures the whole `$CFG` into `$CFG->config_php_settings` and `get_config()` prefers it over the database row. Upstream's `$CFG->langmenu = 0` therefore silently overrode the `langmenu` row that `SITE_SETTING_langmenu=1` bakes into `install.sq3`: the setting was applied, stored correctly, and then ignored, so a trial with a baked language pack had no way to offer the switcher. Leaving it unset makes `langmenu` an ordinary site setting, decided by the sandbox configuration (and still changeable by an admin inside the trial). A configuration that does not set it keeps upstream's behaviour. |
+| `playground.config.json` | Strip upstream's `sentry.dsn` block | Upstream ships its own Sentry ingest DSN in the config (their #286 / ADR-0028), and `deploy.sh` rsyncs the file verbatim — without this edit every trial visitor's browser errors (tagged with runtime, Moodle branch and PHP version) would be reported to the upstream project's Sentry account. Their client is a no-op when `config.sentry.dsn` is unset, so removing the block disables it completely. The DSN is part of the patch anchor on purpose: if upstream rotates it, the build stops and a human re-checks what changed around monitoring. |
 
 ### Source pin
 
-`PLAYGROUND_REF` defaults to `2707585fd78849e33f6f663cb81655de88a96513`
-(upstream `main` as of 2026-07-27). The live-verified deployment (see
-Status below) was built at `8d9c59b`; the `8d9c59b..2707585` diff was
-assessed 2026-07-27 as dependency housekeeping only (php-wasm
-3.1.44→3.1.45, biome, concurrently, GH Actions). Bump the pin
-deliberately, after checking the upstream diff — not by pointing it at
-`main`.
+`PLAYGROUND_REF` defaults to `f3e866242efc5bea60a61e0cc133ff7a9da9924d`
+(upstream `main` as of 2026-08-19). The `2707585..f3e8662` diff was
+assessed 2026-08-19: Sentry error monitoring (#286 — neutralised by the
+`playground.config.json` patch above), build identification + cache
+versioning (#287 — versioned SW caches, so clients pick the new build up
+cleanly), Shell UI v2 (#284), MySQL-function emulation in the SQLite
+driver patch (#278), the `MOODLE_502_STABLE` build no longer forcing the
+`v5.2.0` tag (#285 — which is why `BUNDLES` above no longer pins it), and
+php-wasm 3.1.45→3.1.49 plus dev-dependency bumps. `src/blueprint/` and
+`scripts/build-moodle-bundle.sh` were verified UNCHANGED across that
+range, so the blueprint contract and `bake.sh`'s snapshot-fingerprint
+parity hold. Earlier pins: `2707585` (2026-07-27, dependency housekeeping
+only), `8d9c59b` (2026-07-18, first live-verified deployment). Bump the
+pin deliberately, after checking the upstream diff — not by pointing it
+at `main`.
 
 ## nginx
 
@@ -231,7 +240,21 @@ The generated block says all of this inline too.
 Background, measurements and the durable code-side fix:
 `dev-docs/oer-platform/NGINX-SANDBOX-LAUNCH.txt`.
 
-## Status (2026-07-19; scripts reworked 2026-07-31; `--config` added 2026-07-31)
+## Status (2026-07-19; scripts reworked 2026-07-31; `--config` added 2026-07-31; pin bumped 2026-08-19)
+
+**2026-08-19, pin bump to `f3e8662`**: full `install.sh --config` rebuild at
+the new pin (Moodle 5.2.1 pinned by the saved Exchange configuration + 5.0
+branch tip, which had moved to 5.0.9), all three patches applied (the new
+Sentry strip included), both baked-settings snapshots produced genuine cache
+hits, and the baked plugin + `ja` pack were confirmed inside the packed
+bundles themselves. Deployed and live-verified: a real Try-it launch from
+the Exchange booted the restored course in the browser, and the recorded
+request hosts contained no Sentry endpoint (`vagrant.wisecat.net` plus the
+blueprint editor's pre-existing CodeJar CDN loads only). Found and fixed
+while bumping: `npm install` rewrites `package-lock.json` when the local
+npm serialises lockfile metadata differently, which aborted the pin-bump
+checkout — `install.sh` now restores the lockfile alongside the patched
+files before checkout.
 
 **2026-07-31, `--config`**: a full fresh `install.sh --config <file>
 --build-only` run (no pre-existing clone, `PLAYGROUND_DIR`/`DEPLOY_TARGET`
