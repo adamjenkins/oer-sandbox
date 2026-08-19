@@ -268,3 +268,86 @@ oer_sweep_misplaced_plugins() {
     fi
   done
 }
+
+# Removes every plugin an earlier run injected into the Moodle source tree that
+# the CURRENT configuration does not ask for. $1 is the source checkout, $2 its
+# webroot (they differ on 5.1+, where the docroot is public/), and the remaining
+# arguments are the webroot-relative paths this run wants kept, e.g. "mod/quiz".
+#
+# Why this is needed at all: the source tree is a persistent cache, and
+# fetch-moodle-source.sh refreshes it with `git reset --hard`, which restores
+# tracked files but never removes untracked ones. Injection itself only ever
+# `rm -rf`s the one directory it is about to write. So a plugin dropped from the
+# allowlist stays in the tree forever and is baked into every later bundle —
+# invisibly when it installs, and as a build failure naming a plugin that is
+# nowhere in the config when it does not (mod_attendance on 5.0, 2026-08-19).
+#
+# Untracked-ness is the test for "we put it there": a pristine Moodle checkout
+# has no untracked plugin directories, so anything untracked carrying a
+# version.php was injected. That keeps core plugins (tracked) safe without
+# needing a list of them, and it is why a tree that is not a git checkout is
+# left strictly alone rather than swept on a guess. Only directories are
+# considered, so the untracked files patch-moodle-source.sh writes into lib/
+# are never candidates.
+oer_sweep_unconfigured_plugins() {
+  local moodledir="$1" webroot="$2"
+  shift 2
+  local keep=" $* "
+
+  if [ ! -d "$moodledir/.git" ]; then
+    echo "== Sweep skipped: $moodledir is not a git checkout, so an injected plugin" >&2
+    echo "   cannot be told apart from a core one. Nothing removed. ==" >&2
+    return 0
+  fi
+
+  local relroot="."
+  if [ "$webroot" != "$moodledir" ]; then
+    relroot="${webroot#"$moodledir"/}"
+  fi
+
+  local entry path rel declared
+  while IFS= read -r -d '' entry; do
+    # Wholly-untracked directories are reported with a trailing slash; anything
+    # without one is a loose file and never a plugin.
+    case "$entry" in
+      */) ;;
+      *) continue ;;
+    esac
+    path="${entry%/}"
+    rel="$path"
+    if [ "$relroot" != "." ]; then
+      rel="${path#"$relroot"/}"
+    fi
+    case "$keep" in
+      *" $rel "*) continue ;;
+    esac
+    declared="$(oer_declared_component "$moodledir/$path/version.php")"
+    [ -n "$declared" ] || continue
+
+    echo "== Removing $rel ($declared): injected by an earlier run, not in this" >&2
+    echo "   configuration. The config is the truth; the source tree is a cache. ==" >&2
+    rm -rf "${moodledir:?}/${path:?}"
+  done < <(git -C "$moodledir" ls-files --others --exclude-standard --directory -z -- "$relroot")
+}
+
+# The language-pack equivalent. $1 is the webroot, the rest are the language
+# codes this configuration wants. No git needed: oer-baked-lang/ is a directory
+# bake.sh owns outright, so every child of it was put there by a bake.
+oer_sweep_unconfigured_langpacks() {
+  local webroot="$1"
+  shift
+  local keep=" $* "
+
+  [ -d "$webroot/oer-baked-lang" ] || return 0
+
+  local dir code
+  for dir in "$webroot"/oer-baked-lang/*/; do
+    [ -d "$dir" ] || continue
+    code="$(basename "$dir")"
+    case "$keep" in
+      *" $code "*) continue ;;
+    esac
+    echo "== Removing baked language pack '$code': not in this configuration ==" >&2
+    rm -rf "$dir"
+  done
+}

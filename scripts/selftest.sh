@@ -163,4 +163,83 @@ rm -f "$FAKE/src/runtime/config-template.js"
 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
 check "missing file fails the build" "1" "$?"
 
+# --- source-tree sweeps ------------------------------------------------------
+# The Moodle source tree is a persistent CACHE between builds, so a plugin or
+# language pack an earlier run injected survives every later run — including
+# runs whose config no longer names it (fetch-moodle-source.sh does
+# `git reset --hard`, which never removes untracked files). That silently bakes
+# a de-configured plugin into every later bundle, and, when the plugin cannot
+# install on the branch, fails the build with an error naming a plugin that is
+# nowhere in the config. Both sweeps below exist to make the config the truth.
+#
+# Real instances this guards against (2026-08-19): mod_attendance, a 5.1-only
+# build, kept failing MOODLE_500_STABLE after being deleted from the allowlist;
+# and mod_quizquest, marked bake=0, was installed and visible in a freshly
+# baked MOODLE_502_STABLE snapshot.
+SRC="$TMP/fake-moodle"
+mkdir -p "$SRC/mod/quiz" "$SRC/local" "$SRC/lib/dml" "$SRC/.playground"
+
+write_version_php() {
+  mkdir -p "$1"
+  printf '<?php\n$plugin->component = %s;\n$plugin->version = 2026010100;\n' "'$2'" >"$1/version.php"
+}
+
+# A tracked core plugin, so the sweep has something it must NOT touch.
+write_version_php "$SRC/mod/quiz" "mod_quiz"
+git -C "$SRC" init -q
+git -C "$SRC" add -A
+git -C "$SRC" -c user.name=t -c user.email=t@example.invalid commit -qm "core"
+
+# Injected by earlier runs: one the config still wants, one it no longer does.
+write_version_php "$SRC/mod/attendance" "mod_attendance"
+write_version_php "$SRC/local/accessibility" "local_accessibility"
+# Untracked, but not a plugin: the playground's own scratch dir and a patch
+# file patch-moodle-source.sh writes. Neither may be swept.
+printf 'scratch\n' >"$SRC/.playground/marker"
+printf '<?php // patched driver\n' >"$SRC/lib/dml/sqlite3_pdo_moodle_database.php"
+
+( source "$SCRIPT_DIR/common.sh"
+  oer_sweep_unconfigured_plugins "$SRC" "$SRC" "local/accessibility"
+) >"$TMP/out" 2>&1
+
+[ ! -d "$SRC/mod/attendance" ] \
+  && echo "ok   - de-configured plugin is swept" \
+  || { echo "FAIL - mod/attendance survived the sweep" >&2; FAILED=1; }
+[ -d "$SRC/local/accessibility" ] \
+  && echo "ok   - configured plugin is kept" \
+  || { echo "FAIL - local/accessibility was swept but is in the config" >&2; FAILED=1; }
+[ -f "$SRC/mod/quiz/version.php" ] \
+  && echo "ok   - tracked core plugin is kept" \
+  || { echo "FAIL - a tracked core plugin was deleted" >&2; FAILED=1; }
+[ -f "$SRC/.playground/marker" ] \
+  && echo "ok   - untracked non-plugin directory is kept" \
+  || { echo "FAIL - .playground was deleted" >&2; FAILED=1; }
+[ -f "$SRC/lib/dml/sqlite3_pdo_moodle_database.php" ] \
+  && echo "ok   - untracked patch file is kept" \
+  || { echo "FAIL - a patch file was deleted" >&2; FAILED=1; }
+grep -q "mod_attendance" "$TMP/out" \
+  && echo "ok   - the sweep says what it removed" \
+  || { echo "FAIL - sweep removed a plugin without naming it" >&2; FAILED=1; }
+
+# A source tree that is not a git checkout must be left alone, not guessed at.
+NOGIT="$TMP/not-a-checkout"
+write_version_php "$NOGIT/mod/attendance" "mod_attendance"
+( source "$SCRIPT_DIR/common.sh"; oer_sweep_unconfigured_plugins "$NOGIT" "$NOGIT" ) >"$TMP/out" 2>&1
+check "non-git source tree does not fail the bake" "0" "$?"
+[ -d "$NOGIT/mod/attendance" ] \
+  && echo "ok   - non-git source tree is left untouched" \
+  || { echo "FAIL - swept a tree whose provenance could not be established" >&2; FAILED=1; }
+
+# Language packs live in a directory bake.sh owns outright, so no git is needed.
+mkdir -p "$SRC/oer-baked-lang/ja" "$SRC/oer-baked-lang/fr"
+printf '<?php\n' >"$SRC/oer-baked-lang/ja/langconfig.php"
+printf '<?php\n' >"$SRC/oer-baked-lang/fr/langconfig.php"
+( source "$SCRIPT_DIR/common.sh"; oer_sweep_unconfigured_langpacks "$SRC" "ja" ) >/dev/null 2>&1
+[ -d "$SRC/oer-baked-lang/ja" ] \
+  && echo "ok   - configured langpack is kept" \
+  || { echo "FAIL - ja was swept but is in the config" >&2; FAILED=1; }
+[ ! -d "$SRC/oer-baked-lang/fr" ] \
+  && echo "ok   - de-configured langpack is swept" \
+  || { echo "FAIL - fr survived the sweep" >&2; FAILED=1; }
+
 exit $FAILED

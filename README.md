@@ -136,6 +136,18 @@ injection — see the comment above the `rm -rf .cache/snapshots/$BRANCH`
 line in the script). It is normally invoked by `install.sh --config` (see
 below), not run by hand.
 
+**The config is the truth, so each run sweeps first.** The Moodle source
+checkout is a cache that survives between builds, and it is refreshed with
+`git reset --hard`, which never removes untracked files — so before injecting
+anything, `bake.sh` deletes every plugin and language pack an earlier run
+injected that the current config no longer names. Without that sweep, dropping
+a plugin from the Exchange's allowlist has no effect on this machine: the old
+copy is baked into every later bundle, silently when it installs, and as a
+build failure naming a plugin absent from the config when it does not. A plugin
+counts as "injected by us" when its directory is untracked in the checkout and
+carries a `version.php`, which is why a source tree that is not a git checkout
+is reported and left alone rather than swept on a guess.
+
 **What it removes.** Without baking, a language pack is downloaded through
 the browser's CORS proxy at every trial boot, and a third-party plugin is
 installed via the WASM runtime's `upgrade_noncore()` path, which does not

@@ -83,6 +83,12 @@ cleanup_tmpdl() { rm -rf "$TMPDL"; }
 trap cleanup_tmpdl EXIT
 
 # --- Language packs ---------------------------------------------------------
+# Drop packs an earlier run baked that this configuration no longer names,
+# before baking the ones it does — the source tree is a cache, and nothing else
+# ever removes them (common.sh's sweep comment has the full reasoning).
+# shellcheck disable=SC2086
+oer_sweep_unconfigured_langpacks "$WEBROOT" ${LANGPACKS:-}
+
 # download.moodle.org's langpack directories are keyed by Moodle series
 # (e.g. "5.2"), the same form as BUNDLE_BRANCH above.
 for code in ${LANGPACKS:-}; do
@@ -124,6 +130,26 @@ done
 # identifier, so both sides must transform it the same way.
 PLUGIN_SPECS_VAR="$(oer_varname "BAKE_PLUGINS_${BUNDLE_BRANCH}")"
 PLUGIN_SPECS="${!PLUGIN_SPECS_VAR:-}"
+
+# What this configuration wants, as webroot-relative paths, so the sweep can
+# tell an injected plugin that is still wanted from one that is not. A spec
+# that is malformed or of an unknown type is skipped here and left to fail
+# with a proper message in the injection loop below — this pre-pass must not
+# become a second, differently-worded validator. An empty PLUGIN_SPECS is not a
+# special case: it means every injected plugin should now be gone.
+KEEP_PATHS=""
+for SPEC in $PLUGIN_SPECS; do
+  KEEP_TYPE="${SPEC%%:*}"
+  KEEP_NAME="${SPEC#*:}"
+  if [ -z "$KEEP_TYPE" ] || [ -z "$KEEP_NAME" ] || [ "$KEEP_TYPE" = "$SPEC" ]; then
+    continue
+  fi
+  KEEP_DIR="$(oer_plugin_type_dir "$KEEP_TYPE" 2>/dev/null)" || continue
+  KEEP_PATHS="$KEEP_PATHS $KEEP_DIR/$KEEP_NAME"
+done
+# shellcheck disable=SC2086
+oer_sweep_unconfigured_plugins "$MOODLE_DIR" "$WEBROOT" $KEEP_PATHS
+
 for SPEC in $PLUGIN_SPECS; do
   PLUGIN_TYPE="${SPEC%%:*}"
   PLUGIN_NAME="${SPEC#*:}"
