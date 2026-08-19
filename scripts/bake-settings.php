@@ -62,8 +62,22 @@ function set_core_config(PDO $db, string $name, string $value): void {
     echo "SETTING $name = $value\n";
 }
 
+// Moodle's three filter states (lib/filterlib.php): anything else is a value
+// core never writes and does not fully understand. This mattered: writing 0 for
+// "off" happened to stop the filter rendering — filter_get_active_state()
+// treats it as falsy and returns disabled (filterlib.php:254), and
+// filter_get_active_in_context()'s HAVING clause reduces to `0 > 0` for a lone
+// system-context row (:552) — but core's own test for "not available anywhere"
+// is `active == TEXTFILTER_DISABLED` (:118), which a 0 row fails. So the filter
+// read as merely off-but-available and a course inside the trial could switch
+// it back on. TEXTFILTER_DISABLED is also what the Exchange's boot-time
+// fallback writes via filter_set_global_state(), and the baked and boot-time
+// paths must not mean different things by the same config line.
+const TEXTFILTER_ON = 1;
+const TEXTFILTER_DISABLED = -9999;
+
 function set_filter_state(PDO $db, string $filter, string $state): void {
-    $active = $state === 'on' ? 1 : ($state === 'off' ? 0 : null);
+    $active = $state === 'on' ? TEXTFILTER_ON : ($state === 'off' ? TEXTFILTER_DISABLED : null);
     if ($active === null) {
         fwrite(STDERR, "ERROR: filter state must be 'on' or 'off', got '$state' for '$filter'\n");
         exit(1);

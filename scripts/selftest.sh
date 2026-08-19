@@ -261,4 +261,50 @@ mkdir -p "$SRC/oer-baked-lang/de"
 COUNT=$( source "$SCRIPT_DIR/common.sh"; oer_sweep_unconfigured_langpacks "$SRC" "ja" 2>/dev/null )
 check "langpack sweep reports how many it removed" "1" "$COUNT"
 
+# --- bake-settings.php -------------------------------------------------------
+# What it writes into the snapshot has to be a state Moodle actually uses.
+# Core defines exactly three (lib/filterlib.php): TEXTFILTER_ON = 1,
+# TEXTFILTER_OFF = -1 (available but off, so a course can switch it back on),
+# and TEXTFILTER_DISABLED = -9999 (not available anywhere). "off" in a sandbox
+# config means the latter — which is also what the Exchange's boot-time
+# fallback writes through filter_set_global_state(), so the baked and
+# boot-time paths must not disagree about the same input.
+PHP="${PHP_BIN:-php}"
+if ! "$PHP" -m 2>/dev/null | grep -qi pdo_sqlite; then
+  echo "skip - bake-settings.php tests (no pdo_sqlite in $PHP)" >&2
+else
+  SNAP="$TMP/install.sq3"
+  "$PHP" -r '
+    $db = new PDO("sqlite:" . $argv[1]);
+    $db->exec("CREATE TABLE mdl_config (id INTEGER PRIMARY KEY, name TEXT, value TEXT)");
+    $db->exec("CREATE TABLE mdl_filter_active (id INTEGER PRIMARY KEY, filter TEXT, contextid INTEGER, active INTEGER, sortorder INTEGER)");
+    $db->exec("INSERT INTO mdl_filter_active (filter, contextid, active, sortorder) VALUES (\"displayh5p\", 1, 1, 1)");
+  ' "$SNAP"
+
+  US=$'\x1f'
+  printf 'FILTER%sdisplayh5p%soff\nFILTER%smultilang%son\nSETTING%slangmenu%s1\n' \
+    "$US" "$US" "$US" "$US" "$US" "$US" | "$PHP" "$SCRIPT_DIR/bake-settings.php" "$SNAP" >/dev/null 2>&1
+
+  read_state() {
+    "$PHP" -r '
+      $db = new PDO("sqlite:" . $argv[1]);
+      $st = $db->prepare("SELECT active FROM mdl_filter_active WHERE filter = :f AND contextid = 1");
+      $st->execute(["f" => $argv[2]]);
+      $v = $st->fetchColumn();
+      echo $v === false ? "none" : $v;
+    ' "$SNAP" "$1"
+  }
+  check "a filter switched off is stored as TEXTFILTER_DISABLED" "-9999" "$(read_state displayh5p)"
+  check "a filter switched on is stored as TEXTFILTER_ON" "1" "$(read_state multilang)"
+
+  SETTINGVALUE=$("$PHP" -r '
+    $db = new PDO("sqlite:" . $argv[1]);
+    $st = $db->prepare("SELECT value FROM mdl_config WHERE name = :n");
+    $st->execute(["n" => "langmenu"]);
+    $v = $st->fetchColumn();
+    echo $v === false ? "none" : $v;
+  ' "$SNAP")
+  check "a site setting is stored as a core config row" "1" "$SETTINGVALUE"
+fi
+
 exit $FAILED
