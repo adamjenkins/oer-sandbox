@@ -41,6 +41,19 @@ page (`local_oerexchange`'s `sandbox_config.php`):
 scripts/install.sh --config oer-sandbox.conf
 ```
 
+**If your Exchange serves a certificate the build host does not trust**, the
+plugin downloads abort with `curl: (60) SSL certificate problem` and the whole
+run stops (`INSTALL FAILED (exit 60) — NOTHING WAS DEPLOYED`, so the previous
+sandbox is left intact). Point curl at the certificate rather than reaching for
+`OER_INSECURE_TLS=1` — these downloads are plugin code baked into every trial:
+
+```bash
+CURL_CA_BUNDLE=/path/to/that-vhost.pem scripts/install.sh --config oer-sandbox.conf
+```
+
+Read the certificate path out of the vhost that actually serves the Exchange
+(`ssl_certificate` in its nginx config) — it is per-machine and does change.
+
 On a machine with **nothing** yet — no clone, no bundles, no deploy
 target — this one command takes it all the way to a deployed, configured
 sandbox:
