@@ -251,6 +251,12 @@ class player {
     }
 }
 PHP
+  mkdir -p "$root/${pub}h5p/h5plib/v128/joubel/core/styles"
+  # The appended rule must land in the CORE stylesheet; the hunk refuses to touch
+  # a file that does not carry this marker selector.
+  cat >"$root/${pub}h5p/h5plib/v128/joubel/core/styles/h5p.css" <<'CSS'
+.h5p-iframe-wrapper { width: auto; height: auto; }
+CSS
   cat >"$root/${pub}h5p/js/embed.js" <<'JS'
 document.onreadystatechange = async() => {
     // Check for H5P iFrame.
@@ -287,6 +293,14 @@ for pub in "" "public/"; do
   grep -qF 'contentWindow: window, contentDocument: document' "$DSRC/${pub}h5p/js/embed.js" \
     && echo "ok   - embed.js falls back to the in-document shim (${label})" \
     || { echo "FAIL - embed.js div shim missing (${label})" >&2; FAILED=1; }
+  # H5P positions the YouTube iframe by assigning to player.g, a minified YT
+  # internal; when that breaks the iframe flows below its aspect-ratio box and is
+  # clipped — audio, no picture. The CSS rule restores it regardless.
+  grep -qF '.h5p-video-wrapper iframe' "$DSRC/${pub}h5p/h5plib/v128/joubel/core/styles/h5p.css" \
+    && echo "ok   - video iframe positioning rule appended to h5p.css (${label})" \
+    || { echo "FAIL - video iframe positioning rule missing (${label})" >&2; FAILED=1; }
+  COUNT=$(grep -cF 'OER-SANDBOX PATCH: h5p video iframe position' "$DSRC/${pub}h5p/h5plib/v128/joubel/core/styles/h5p.css")
+  check "video CSS appended exactly once (${label})" "1" "$COUNT"
 
   # Parse every file the hunk rewrites — grep cannot see a mangled transform.
   if command -v php >/dev/null 2>&1; then

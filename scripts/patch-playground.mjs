@@ -378,6 +378,61 @@ path.write_text(text, encoding="utf-8")
 PY
 fi
 
+# OER-SANDBOX PATCH: h5p video iframe position.
+#
+# H5P's YouTube handler positions the player iframe by assigning to
+# 'player.g.style' (H5P.Video-1.6/scripts/youtube.js:169) - 'g' being a MINIFIED
+# private property of YouTube's Player object, not the documented
+# 'player.getIframe()'. YouTube re-minifies regularly, so when 'g' stops being
+# the iframe the assignment lands somewhere harmless and the iframe never
+# becomes absolutely positioned. It then flows AFTER the aspect-ratio box the
+# same script builds ('padding: 56.25% 0 0 0', youtube.js:23) and is clipped by
+# the wrapper's overflow:hidden - the player keeps running just below the
+# visible area, so you get audio and no picture.
+#
+# Measured live 2026-08-22 before the fix: iframe rect [0, 565, 1005, 565],
+# position "static", and elementFromPoint at the centre of the video area
+# returned a DIV, not the iframe. Injecting the rule below moved it to
+# [0, 0, 1005, 565], position "absolute", with the IFRAME on top. (The same run
+# confirmed YT.Player.prototype.getIframe exists, i.e. H5P had a supported API
+# available and did not use it.)
+#
+# Fixed in CSS rather than JS on purpose: youtube.js ships INSIDE each .h5p
+# content package, which this build pipeline never sees - only Moodle core is
+# patchable here. The rule restores the layout the script intended whether or
+# not its private-property assignment worked, so it is also future-proof against
+# the next YouTube re-minification. Worth reporting to H5P separately.
+#
+# NOTE: any Moodle site serving this content is affected, not just the sandbox;
+# there the same rule belongs in the theme's raw SCSS or additionalhtmlcss.
+for H5PCSS in "$SOURCE_DIR/\${PUB}"h5p/h5plib/*/joubel/core/styles/h5p.css; do
+  [ -f "$H5PCSS" ] || continue
+  if grep -q 'OER-SANDBOX PATCH: h5p video iframe position' "$H5PCSS"; then
+    continue
+  fi
+  if ! grep -q 'h5p-iframe-wrapper' "$H5PCSS"; then
+    echo "ERROR: $H5PCSS does not look like the H5P core stylesheet" >&2
+    echo "       (no .h5p-iframe-wrapper rule). Refusing to append the video" >&2
+    echo "       iframe fix to the wrong file." >&2
+    exit 1
+  fi
+  cat >>"$H5PCSS" <<'CSS'
+
+/* OER-SANDBOX PATCH: h5p video iframe position. H5P's YouTube handler sets this
+   inline via player.g (a minified YouTube internal); when that breaks, the
+   iframe flows below its aspect-ratio box and is clipped away - audio plays,
+   nothing is visible. Restore the intended layout in CSS so it does not depend
+   on YouTube's private property names. */
+.h5p-video-wrapper iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+CSS
+done
+
 EMBEDJS="$SOURCE_DIR/\${PUB}h5p/js/embed.js"
 if [ -f "$EMBEDJS" ] && ! grep -q 'OER-SANDBOX PATCH: h5p div' "$EMBEDJS"; then
   python3 - "$EMBEDJS" <<'PY'
