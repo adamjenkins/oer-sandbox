@@ -208,9 +208,50 @@ bump.
 
 ### Source pin
 
-`PLAYGROUND_REF` defaults to `f3e866242efc5bea60a61e0cc133ff7a9da9924d`
-(upstream `main` as of 2026-08-19). The `2707585..f3e8662` diff was
-assessed 2026-08-19: Sentry error monitoring (#286 — neutralised by the
+`PLAYGROUND_REF` defaults to `78d89552726c2edaf1509ed035b698fe595e08d3`
+(upstream `main` as of 2026-09-17). The `f3e8662..78d8955` diff (22
+commits) was assessed 2026-09-17:
+
+- **#291, `fix: harden runtime against Sentry-reported crashes` — the
+  reason for this bump.** It fixes five runtime crash paths, one of which
+  was live here: `phpResponseToResponse()` built
+  `new Response(bytes, {status})` unconditionally, so a PHP reply on a
+  null-body status (304, 204, …) threw
+  `TypeError: Response with null body status cannot have body` and the
+  worker answered **500** instead. Measured on the deployed `f3e8662`
+  build, 2026-09-17: a conditional GET (`If-Modified-Since` in the
+  future) for `theme/yui_combo.php?rollup/3.18.1/yui-moodlesimple-min.css`
+  returned `500` with that TypeError as its body, on **both** the 5.2.3
+  and the 5.0.10 bundle (so it is a runtime defect, not a Moodle-version
+  one). The commit also skips a malformed response header instead of
+  aborting the whole response, guards `navigator.serviceWorker` for iOS
+  private browsing, passes upstream 401/403/404/410/429 through the addon
+  proxy, and names the asset + boot phase in network-level fetch errors.
+- #309 experimental Moodle 5.3 beta support: adds a `MOODLE_503_BETA`
+  entry to `src/shared/version-resolver.js` (pinned to the `v5.3.0-beta`
+  tag per their ADR-0030) and makes `fetch-moodle-source.sh` read
+  `GIT_REF` from that metadata. Opt-in only — every existing branch entry
+  carries `gitRef: "<branch>"`, so `MOODLE_502_STABLE`/`MOODLE_500_STABLE`
+  resolve exactly as before, and `BUNDLES` here does not list the beta.
+  `build-moodle-bundle.sh` now records the resolved Moodle **commit** in
+  the manifest's `source.url` instead of the branch name (better
+  provenance; no build-behaviour change).
+- php-wasm 3.1.49→3.1.53 (four packages, four Dependabot rounds),
+  zstddec 0.2.0→0.3.1, and dev-only bumps (biome, @playwright/test,
+  concurrently). The rest is documentation and vendored agent skills
+  (`.agents/`, `.claude/skills/`) plus CI workflow pinning — no runtime
+  code.
+- Verified UNCHANGED across the range: all four patched files
+  (`patch-playground.mjs --list`), so the patches apply as-is, and
+  `src/blueprint/`, so the blueprint contract holds. Every input to
+  `bake.sh`'s copy of the snapshot fingerprint is unchanged too —
+  `generate-install-snapshot.sh`, `patch-moodle-source.sh`,
+  `generate-component-cache.php` and `patches/` — so the cache-hit
+  mechanism still lines up. `scripts/build-moodle-bundle.sh` did change
+  (the one-line `source.url` above), but it is not hashed into that
+  fingerprint, so it cannot move it.
+
+The `2707585..f3e8662` diff was assessed 2026-08-19: Sentry error monitoring (#286 — neutralised by the
 `playground.config.json` patch above), build identification + cache
 versioning (#287 — versioned SW caches, so clients pick the new build up
 cleanly), Shell UI v2 (#284), MySQL-function emulation in the SQLite
@@ -265,7 +306,41 @@ The generated block says all of this inline too.
 Background, measurements and the durable code-side fix:
 `dev-docs/oer-platform/NGINX-SANDBOX-LAUNCH.txt`.
 
-## Status (2026-07-19; scripts reworked 2026-07-31; `--config` added 2026-07-31; pin bumped 2026-08-19)
+## Status (2026-07-19; scripts reworked 2026-07-31; `--config` added 2026-07-31; pin bumped 2026-09-17)
+
+**2026-09-17, pin bump to `78d8955` + a fifth patch**: full
+`install.sh --config` rebuild at the new pin, config rendered live from the
+Exchange (stamp `cfg-f5764281c2d3`, unchanged since the 2026-09-17 morning
+build), both branches producing genuine snapshot cache hits
+(`3fef2ed…-8130f787310bdc7b-0589acb9f13910d9` for 5.2,
+`662f6cc…` for 5.0), releases unchanged at 5.2.3+ (Build 20260916) and
+5.0.10 (Build 20260914), and the deployed stamp re-verified as a MATCH
+against `config::current()['stamp']` through `bundle_stamp::deployed()`
+with the `sandboxbundlestamp` MUC cache purged first.
+
+The bump was made **to fix live breakage**, not for housekeeping: upstream
+#291 repairs the runtime crash on a null-body HTTP status. It turned out to
+fix only half of it, so this rebuild also carries the new fifth patch
+(`php-worker.js`, `serializeResponse`) — see the patch table. Evidence, same
+conditional GET for `theme/yui_combo.php` with a future `If-Modified-Since`,
+measured inside a booted trial:
+
+| Deployed build | Result |
+|---|---|
+| `f3e8662` (pre-#291) | **500** in 19 ms, body `TypeError: Response with null body status cannot have body` — reproduced on the 5.0.10 bundle too, so it was never Moodle-version-specific |
+| `78d8955`, upstream fix only | **no reply at all** — still open when the 30 s probe budget expired, and its 504 safety net is disarmed because the throw lands after `clearTimeout` |
+| `78d8955` + fifth patch | **304**, 0 bytes, 1.2 s — correct. Control in the same run: a plain (unconditional) GET of the same URL still returns 200 with 2910 bytes |
+
+Two things found while bumping, both written up in
+`dev-docs/oer-sandbox/discoveries/`: npm's **upgrade** path inside
+`/vagrant` (shared folder) half-finishes and leaves package directories
+empty, which kills the worker esbuild with `Could not resolve
+"./jspi/php_8_1.js"` — delete `node_modules` (the `rm -rf` itself needs a
+retry) and re-run; and a browser profile that had used the sandbox
+**before** a rebuild did not boot at all afterwards (old service worker
+still active, its versioned caches purged) while a fresh profile booted in
+9 s — see the session log in `dev-docs/oer-platform/` for where that
+investigation stands.
 
 **2026-08-19, pin bump to `f3e8662`**: full `install.sh --config` rebuild at
 the new pin (Moodle 5.2.1 pinned by the saved Exchange configuration + 5.0

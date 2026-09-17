@@ -97,6 +97,69 @@ const MAX_BROWSER_BACKUP_BYTES = ${FAST_DOWNLOAD_MAX_MB} * 1024 * 1024;`,
 `,
   },
   {
+    file: "php-worker.js",
+    what: "send a null-body status across the bridge with a null body",
+    // Upstream #291 fixed HALF of this. Its NULL_BODY_STATUSES guard made
+    // src/runtime/php-compat.js build `new Response(null, {status: 304})`
+    // correctly, so a Moodle 304/204 no longer throws in the worker. But
+    // serializeResponse() below then calls response.arrayBuffer() on that
+    // null-body Response, which resolves to an EMPTY-BUT-PRESENT ArrayBuffer,
+    // and the service worker rebuilds the reply as
+    //   new Response(message.response.body, {status, statusText, headers})
+    // (sw.js, its BroadcastChannel "message" listener). Verified in
+    // Chromium 149 on 2026-09-17: an ArrayBuffer(0) or Uint8Array(0) body on
+    // 304/204 throws "Response with null body status cannot have body";
+    // only null constructs.
+    //
+    // That throw is the worst possible place for one. The listener has already
+    // run pending.delete(id) and clearTimeout(entry.timeoutId) by then, so
+    // entry.resolve() is never called AND the 300 s bridge timeout that would
+    // have answered 504 is gone: the request hangs for the life of the tab.
+    // Measured against the deployed builds, same conditional GET for
+    // theme/yui_combo.php with a future If-Modified-Since:
+    //   pin f3e8662 (pre-#291): 500 in 19 ms, body "TypeError: Response with
+    //                           null body status cannot have body"
+    //   pin 78d8955 (post-#291, unpatched): no reply at all, still open at 30 s
+    // So taking the upstream fix alone turns a broken asset into a dead click —
+    // which is what "links do nothing when clicked" looks like from the outside.
+    //
+    // Fixed here rather than in sw.js because serializeResponse is the single
+    // place all three bridge replies (normal, error-path and retry) are built,
+    // and a wire message that claims a body on a bodyless status is wrong at
+    // the source. Worth sending upstream as the other half of #291.
+    marker: "OER-SANDBOX PATCH: null-body bridge",
+    find: `function serializeResponse(response) {
+  return response.arrayBuffer().then((body) => ({
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers.entries()),
+    body,
+  }));
+}`,
+    replace: `// OER-SANDBOX PATCH: null-body bridge. A reply on a null-body status must
+// cross the BroadcastChannel with body === null. The service worker rebuilds
+// every reply with new Response(body, {status, ...}), and that constructor
+// rejects an empty-but-present body on 101/103/204/205/304 — inside the
+// message listener, after the pending entry and its 300 s timeout have been
+// cleared, so the request never settles and no 504 ever fires. See
+// scripts/patch-playground.mjs for the measurements.
+const OER_NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+
+function serializeResponse(response) {
+  const head = {
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers.entries()),
+  };
+
+  if (OER_NULL_BODY_STATUSES.has(response.status)) {
+    return Promise.resolve({ ...head, body: null });
+  }
+
+  return response.arrayBuffer().then((body) => ({ ...head, body }));
+}`,
+  },
+  {
     file: "playground.config.json",
     what: "strip upstream's Sentry DSN (no visitor telemetry from this deployment)",
     // Upstream ships its own Sentry ingest DSN in the config (#286, ADR-0028),
