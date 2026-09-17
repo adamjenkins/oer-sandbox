@@ -336,11 +336,22 @@ Two things found while bumping, both written up in
 `/vagrant` (shared folder) half-finishes and leaves package directories
 empty, which kills the worker esbuild with `Could not resolve
 "./jspi/php_8_1.js"` — delete `node_modules` (the `rm -rf` itself needs a
-retry) and re-run; and a browser profile that had used the sandbox
-**before** a rebuild did not boot at all afterwards (old service worker
-still active, its versioned caches purged) while a fresh profile booted in
-9 s — see the session log in `dev-docs/oer-platform/` for where that
-investigation stands.
+retry) and re-run; and — the one to remember when deploying — **a visitor
+whose boot broke once keeps the OLD service worker in control, and no later
+deploy fixes it.** A profile sent through the broken build never booted
+again, not even after the fixed build was deployed (481 s, empty shell),
+with its active worker still `sw.bundle.js?build=<the old build>` while a
+cache belonging to the new build sat beside it: the new worker installs but
+never becomes the controller, so `skipWaiting()`/`clients.claim()` in the
+new code never run. Recovery is a **site-data reset**, not a reload —
+`getRegistrations()` → `unregister()` plus deleting every `caches` key, then
+reload, booted in 9.1 s on the new build. A profile whose previous visit was
+on a *working* build crossed the same deploy cleanly (12.1 s, new worker
+adopted), and a fresh profile boots in ~9 s, so only visitors who met a
+broken build need this. Also: **a fresh Playwright profile cannot detect
+this class of problem** — verifying a deploy for returning visitors needs a
+persistent profile seeded beforehand, checking the active worker's
+`scriptURL` (it carries `?build=`) and `caches.keys()`.
 
 **2026-08-19, pin bump to `f3e8662`**: full `install.sh --config` rebuild at
 the new pin (Moodle 5.2.1 pinned by the saved Exchange configuration + 5.0
