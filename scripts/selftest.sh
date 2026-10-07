@@ -85,6 +85,25 @@ write_fake_sentry_config() {
     >"$FAKE/playground.config.json"
 }
 
+# The null-body bridge patch rewrites serializeResponse() in php-worker.js, so
+# the fixture carries that function verbatim as the anchor. Added 2026-10-07:
+# the patch itself landed on 2026-09-17 without a fixture, which left this whole
+# patch section failing — the patcher aborted on the missing file, so every
+# effect assertion below it failed too. Exactly the failure mode the selftest
+# rule in dev-docs/oer-sandbox/README.md exists to prevent.
+write_fake_php_worker() {
+  cat >"$FAKE/php-worker.js" <<'JS'
+function serializeResponse(response) {
+  return response.arrayBuffer().then((body) => ({
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers.entries()),
+    body,
+  }));
+}
+JS
+}
+
 # The h5p-srcdoc edit inserts a hunk into the playground's own Moodle-source
 # patcher, so the fixture carries the two things that hunk needs: the anchor it
 # is inserted before, and the $PUB prefix detection it relies on.
@@ -132,9 +151,10 @@ write_fake_h5p_source() {
 JS
 }
 
-check "--list names all four patched files" \
+check "--list names all five patched files" \
   "src/blueprint/steps/moodle-restore.js
 src/runtime/config-template.js
+php-worker.js
 playground.config.json
 scripts/patch-moodle-source.sh" \
   "$(node "$SCRIPT_DIR/patch-playground.mjs" --list)"
@@ -143,8 +163,46 @@ write_fake_anchor 1
 write_fake_budget_anchor
 write_fake_sentry_config
 write_fake_patch_moodle_source
+write_fake_php_worker
 node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
 check "patch applies" "0" "$?"
+
+# --- null-body bridge hunk ---------------------------------------------------
+# A reply on 101/103/204/205/304 must cross the bridge with body === null, or
+# the service worker's new Response(body, {status}) throws inside the message
+# listener and the request never settles (see patch-playground.mjs for the
+# measurements). Assert the effect, not just the marker: the status set, the
+# early return, and that a normal status still goes through arrayBuffer().
+grep -q 'OER-SANDBOX PATCH: null-body bridge' "$FAKE/php-worker.js" \
+  && echo "ok   - the null-body hunk reached php-worker.js" \
+  || { echo "FAIL - null-body hunk missing" >&2; FAILED=1; }
+grep -q 'OER_NULL_BODY_STATUSES = new Set(\[101, 103, 204, 205, 304\])' "$FAKE/php-worker.js" \
+  && echo "ok   - every null-body status is covered" \
+  || { echo "FAIL - null-body status set missing or changed" >&2; FAILED=1; }
+grep -q 'return Promise.resolve({ ...head, body: null });' "$FAKE/php-worker.js" \
+  && echo "ok   - a null-body status serialises with body === null" \
+  || { echo "FAIL - null-body early return missing" >&2; FAILED=1; }
+grep -q 'return response.arrayBuffer().then((body) => ({ ...head, body }));' "$FAKE/php-worker.js" \
+  && echo "ok   - a normal status still serialises its body" \
+  || { echo "FAIL - the normal-status path was lost" >&2; FAILED=1; }
+check "null-body hunk applied exactly once" "1" \
+  "$(grep -c 'OER-SANDBOX PATCH: null-body bridge' "$FAKE/php-worker.js")"
+node -c "$FAKE/php-worker.js" >/dev/null 2>&1 \
+  && echo "ok   - patched php-worker.js still parses as JavaScript" \
+  || { echo "FAIL - patched php-worker.js does not parse" >&2; FAILED=1; }
+
+# Known-bad input: an upstream refactor of serializeResponse must stop the
+# build, not ship a sandbox whose conditional GETs hang for the life of the tab.
+printf 'function serializeResponse(response) { return response.arrayBuffer(); }\n' \
+  >"$FAKE/php-worker.js"
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >"$TMP/out" 2>&1
+check "a refactored serializeResponse fails the build" "1" "$?"
+grep -q 'php-worker.js' "$TMP/out" \
+  && echo "ok   - the failure names php-worker.js" \
+  || { echo "FAIL - failure message does not name php-worker.js" >&2; FAILED=1; }
+write_fake_php_worker
+node "$SCRIPT_DIR/patch-playground.mjs" "$FAKE" >/dev/null 2>&1
+check "patch re-applies after the fixture is restored" "0" "$?"
 
 # --- h5p srcdoc hunk ---------------------------------------------------------
 # Not just "the hunk is present": run the PATCHED patcher against a Moodle

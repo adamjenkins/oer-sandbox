@@ -22,7 +22,7 @@ oer-sandbox/scripts/install.sh
 
 That clones the playground (`PLAYGROUND_REPO` at `PLAYGROUND_REF`, into
 the gitignored `playground/` inside this repo), builds the service
-worker, shell, and the `MOODLE_502_STABLE` +
+worker, shell, and the `MOODLE_503_STABLE` + `MOODLE_502_STABLE` +
 `MOODLE_500_STABLE` bundles, rsyncs the static tree to
 `/srv/oer-sandbox/try/`, and prints the nginx `location` block for
 `/try/`. `--clone-only` / `--build-only` stop early; `--install-nginx`
@@ -128,7 +128,7 @@ Overridable settings (full list in `scripts/common.sh`):
 | `PLAYGROUND_REPO` | `https://github.com/ateeducacion/moodle-playground.git` | Playground git URL |
 | `PLAYGROUND_REF` | see "Source pin" below | Commit/tag to build from |
 | `PLAYGROUND_DIR` | `<this repo>/playground` | Clone location (reuse an existing clone by pointing this at it) |
-| `BUNDLES` | `MOODLE_502_STABLE MOODLE_500_STABLE` | `BRANCH[:GIT_REF]` specs (both track the branch tip by default; pin with `:vX.Y.Z` for a reproducible build — the sandbox configuration's own `BUNDLES=` overrides this) |
+| `BUNDLES` | `MOODLE_503_STABLE MOODLE_502_STABLE MOODLE_500_STABLE` | `BRANCH[:GIT_REF]` specs (all three track the branch tip by default; pin with `:vX.Y.Z` for a reproducible build — the sandbox configuration's own `BUNDLES=` overrides this) |
 | `DEPLOY_TARGET` | `/srv/oer-sandbox/try` | Where the static tree is rsynced |
 | `TRY_LOCATION` | `/try/` | URL path nginx serves it at |
 | `WEB_OWNER` | `www-data:www-data` | Ownership of the deployed tree (empty = skip chown) |
@@ -208,9 +208,63 @@ bump.
 
 ### Source pin
 
-`PLAYGROUND_REF` defaults to `78d89552726c2edaf1509ed035b698fe595e08d3`
-(upstream `main` as of 2026-09-17). The `f3e8662..78d8955` diff (22
-commits) was assessed 2026-09-17:
+`PLAYGROUND_REF` defaults to `6b0e9f7514825a27784bf68fffad6bef8290dc2c`
+(upstream `main` as of 2026-10-07). The `78d8955..6b0e9f7` diff (21
+commits, 63 files, +1499/-2831) was assessed 2026-10-07:
+
+- **#328 `Add Moodle 5.3 stable support and retire the 5.3 beta channel`
+  (`45bda69`) and #329 `make Moodle 5.3 LTS the default branch`
+  (`c457412`) — the reason for this bump.** #328 replaces the pinned
+  `MOODLE_503_BETA` entry (`gitRef: v5.3.0-beta`, their ADR-0030) with a
+  real `MOODLE_503_STABLE` one (`gitRef: MOODLE_503_STABLE`, PHP 8.3/8.4)
+  and relabels `main` as 6.0dev, which is what makes
+  `BUNDLES=... MOODLE_503_STABLE` buildable at all.
+- **#329 also carries the fix that makes a local patch the wrong answer
+  here.** Moodle 5.3+ `core\composer` reads `composer.lock` on every admin
+  tree build (`admin/settings/server.php` checks `league/oauth2-server`),
+  and `build-moodle-bundle.sh` used to exclude `composer.lock` from the
+  bundle zip — so a 5.3 bundle built from the old pin boots, but every
+  *Site administration* page throws "Package 'league/oauth2-server' not
+  found in composer.lock". #329 stops excluding it. Adding a
+  `MOODLE_503_STABLE` entry to the old pin via `patch-playground.mjs`
+  would have shipped exactly that defect; this is why the 5.3 channel
+  arrived as a pin bump and not as a sixth patch.
+- #329 additionally moves the **default** branch to 5.3: `DEFAULT_BRANCH`
+  in `build-moodle-bundle.sh` (so `assets/manifests/latest.json` is now a
+  copy of the 5.3 manifest, not the 5.0 one), `DEFAULT_MOODLE_BRANCH` in
+  the resolver, `playground.config.json`, and the default/fallback
+  blueprints. A bare visit to the sandbox therefore boots 5.3 now; the
+  Exchange's own links are unaffected, because `sandbox_launch.php` always
+  names a branch (`playground::map_branch()`).
+- Runtime hardening, no behaviour change we depend on: #318 (worker request
+  queue keeps working when the error path throws, config fetch no longer
+  memoises a failure, install check), #320 (shell and Service Worker
+  messaging), #322 (proxy worker's Nextcloud share mode and repo input),
+  #319 (one PHP single-quote escape helper, now also used by the
+  post-restore plugin re-registration), #315 (dead code: unused entry
+  point, config-template copy, legacy patches, DDL probe), #317 (tests for
+  the SW's URL/HTML rewrite helpers), #316 (Biome 2.5 migration).
+  Dependencies: two php-wasm group rounds (#325, #331), Biome dev bumps,
+  pinned CI actions (#321, #324, #330) and vendored agent skills (#313,
+  #314, #333) — no runtime code in the last group.
+- **Our five patches all still apply** at the new pin:
+  `patch-playground.mjs` reported "5 applied, 0 already present" on the
+  fresh checkout, even though upstream touched four of the five files
+  (`src/runtime/config-template.js`, `php-worker.js`,
+  `playground.config.json`, `scripts/patch-moodle-source.sh`). The
+  null-body bridge patch is **still needed**: upstream's `php-worker.js`
+  changes in this range are the `escapePhp` helper and the queue `catch`,
+  not the null-body serialization path.
+- `bake.sh`'s copy of the snapshot fingerprint still lines up: the
+  snapshot-caching section of `build-moodle-bundle.sh` is unchanged across
+  the range (its only diffs are the `composer.lock` exclusion and
+  `DEFAULT_BRANCH`), and `generate-install-snapshot.sh` /
+  `generate-component-cache.php` are untouched. `patches/moodle/*` and
+  `patch-moodle-source.sh` *did* change, which changes the fingerprint's
+  **value** — so every branch's cached snapshot is regenerated once on the
+  next build — but not the algorithm both sides compute.
+
+The `f3e8662..78d8955` diff (22 commits) was assessed 2026-09-17:
 
 - **#291, `fix: harden runtime against Sentry-reported crashes` — the
   reason for this bump.** It fixes five runtime crash paths, one of which
