@@ -386,7 +386,7 @@ measured inside a booted trial:
 | `78d8955` + fifth patch | **304**, 0 bytes, 1.2 s — correct. Control in the same run: a plain (unconditional) GET of the same URL still returns 200 with 2910 bytes |
 
 Two things found while bumping, both written up in
-`dev-docs/oer-sandbox/discoveries/`: npm's **upgrade** path inside
+`dev-docs/oer-platform/oer-sandbox/discoveries/`: npm's **upgrade** path inside
 `/vagrant` (shared folder) half-finishes and leaves package directories
 empty, which kills the worker esbuild with `Could not resolve
 "./jspi/php_8_1.js"` — delete `node_modules` (the `rm -rf` itself needs a
